@@ -9,5 +9,5 @@ object ChannelConfig {
      *
      * Change this to TimeUnit.MINUTES.toMillis(1) for testing.
      */
-    val ACTIVATION_DELAY_MS: Long = TimeUnit.HOURS.toMillis(2)
+    val ACTIVATION_DELAY_MS: Long = TimeUnit.MINUTES.toMillis(1)
 }
