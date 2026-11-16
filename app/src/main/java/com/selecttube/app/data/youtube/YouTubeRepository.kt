@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfoItem
+import org.schabi.newpipe.extractor.channel.tabs.ChannelTabs
 import org.schabi.newpipe.extractor.exceptions.ExtractionException
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.StreamType
@@ -163,7 +164,7 @@ class YouTubeRepository @Inject constructor() {
         }
 
         val tabExtractor = try {
-            youtubeService.getChannelTabExtractorFromId(canonicalId, "videos").apply {
+            youtubeService.getChannelTabExtractorFromId(canonicalId, ChannelTabs.VIDEOS).apply {
                 fetchPage()
             }
         } catch (e: Exception) {
@@ -173,8 +174,9 @@ class YouTubeRepository @Inject constructor() {
             channelExtractor.fetchPage()
             val tabs = channelExtractor.tabs
             val videosTab = tabs?.firstOrNull { tabHandler ->
-                val filter = tabHandler.contentFilter?.joinToString() ?: ""
-                filter.contains("videos", ignoreCase = true) || tabHandler.id.contains("videos", ignoreCase = true)
+                tabHandler.contentFilters?.contains(ChannelTabs.VIDEOS) == true ||
+                    tabHandler.contentFilters?.any { it.contains("videos", ignoreCase = true) } == true ||
+                    tabHandler.id.contains("videos", ignoreCase = true)
             } ?: tabs?.firstOrNull() ?: throw e
 
             youtubeService.getChannelTabExtractor(videosTab).apply {
@@ -192,14 +194,7 @@ class YouTubeRepository @Inject constructor() {
                 val isShort = try {
                     item.isShortFormContent
                 } catch (e: Throwable) {
-                    try {
-                        val method = item.javaClass.methods.firstOrNull {
-                            it.name == "isShortFormContent" && it.parameterCount == 0
-                        }
-                        method?.invoke(item) as? Boolean ?: false
-                    } catch (e2: Throwable) {
-                        false
-                    }
+                    false
                 } || item.url.contains("/shorts/", ignoreCase = true)
 
                 // Filter out live streams
@@ -207,7 +202,6 @@ class YouTubeRepository @Inject constructor() {
                     val streamType = item.streamType
                     streamType == StreamType.LIVE_STREAM ||
                         streamType == StreamType.AUDIO_LIVE_STREAM ||
-                        streamType == StreamType.POST_LIVE_STREAM ||
                         streamType.name.contains("LIVE", ignoreCase = true) ||
                         streamType.name.contains("SHORT", ignoreCase = true)
                 } catch (e: Throwable) {
