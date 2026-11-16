@@ -6,6 +6,7 @@ import com.selecttube.app.data.preferences.AppPreferences
 import com.selecttube.app.domain.Channel
 import com.selecttube.app.domain.toDomain
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -22,7 +23,11 @@ class ChannelRepository @Inject constructor(
     /** BCrypt hash of the user's password, or null before first channel is added. */
     val passwordHash: Flow<String?> = prefs.passwordHash
 
-    /** Total number of channels in the DB (used to determine first-add logic). */
+    suspend fun getPasswordHash(): String? = prefs.passwordHash.first()
+
+    suspend fun hasPassword(): Boolean = getPasswordHash() != null
+
+    /** Total number of channels in the DB. */
     suspend fun channelCount(): Int = dao.count()
 
     suspend fun addChannel(entity: ChannelEntity) = dao.insert(entity)
