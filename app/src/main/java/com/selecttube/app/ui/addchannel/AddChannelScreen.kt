@@ -2,6 +2,7 @@ package com.selecttube.app.ui.addchannel
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,7 +14,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material3.Button
@@ -21,9 +23,12 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -31,6 +36,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -57,7 +63,7 @@ fun AddChannelScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Add Channel") },
+                title = { Text("Add Channels") },
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -74,7 +80,13 @@ fun AddChannelScreen(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Channel input section
+            // ── Section 1: Input Channel ──────────────────────────────────────
+            Text(
+                text = "Enter Channel Details",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+
             OutlinedTextField(
                 value = state.channelInput,
                 onValueChange = viewModel::onChannelInputChange,
@@ -99,14 +111,95 @@ fun AddChannelScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
                 keyboardOptions = KeyboardOptions(
-                    imeAction = ImeAction.Next,
+                    imeAction = ImeAction.Done,
                 ),
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = viewModel::stageChannel,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(modifier = Modifier.size(8.dp))
+                Text("Add to Review List")
+            }
 
-            // Password section based on whether it is first channel
-            if (state.isFirstChannel) {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // ── Section 2: Review List ────────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Review List",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "${state.stagedChannels.size} channel${if (state.stagedChannels.size == 1) "" else "s"}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+
+            if (state.stagedChannels.isEmpty()) {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = "No channels added to the review list yet. Enter a channel above and tap 'Add to Review List'.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
+            } else {
+                state.stagedChannels.forEach { item ->
+                    OutlinedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.displayName,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                if (item.displayName != item.channelId) {
+                                    Text(
+                                        text = item.channelId,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            IconButton(onClick = { viewModel.removeStagedChannel(item.channelId) }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Remove from list",
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+            // ── Section 3: Password & Confirmation ───────────────────────────
+            if (state.isFirstBatch) {
                 Card(
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -115,14 +208,14 @@ fun AddChannelScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "First Channel Setup",
+                            text = "First-Ever Batch Setup",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "This channel will be active immediately. Set a password to protect future additions. The password cannot be changed once set.",
+                            text = "All channels in this initial setup batch will become active immediately. Set a password to protect future additions. The password cannot be changed once set.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSecondaryContainer,
                         )
@@ -165,13 +258,13 @@ fun AddChannelScreen(
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                            text = "Password Protected",
+                            text = "Password Protected Batch",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Enter your password to add this channel. It will enter a pending wait period before becoming available.",
+                            text = "Enter your password once to confirm this batch. All channels in this batch will share a single 2-hour wait before becoming active.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -212,12 +305,18 @@ fun AddChannelScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Submit Button
+            val buttonText = when {
+                state.isFirstBatch -> "Set Password & Add ${if (state.stagedChannels.isNotEmpty()) "(${state.stagedChannels.size})" else ""}"
+                else -> "Confirm & Add Batch ${if (state.stagedChannels.isNotEmpty()) "(${state.stagedChannels.size})" else ""}"
+            }
+
             Button(
-                onClick = viewModel::addChannel,
-                enabled = !state.isLoading,
+                onClick = viewModel::confirmBatch,
+                enabled = !state.isLoading && state.stagedChannels.isNotEmpty(),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp),
+                    .height(52.dp),
             ) {
                 if (state.isLoading) {
                     CircularProgressIndicator(
@@ -227,7 +326,9 @@ fun AddChannelScreen(
                     )
                 } else {
                     Text(
-                        text = if (state.isFirstChannel) "Set Password & Add Channel" else "Add Channel",
+                        text = buttonText,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
                     )
                 }
             }

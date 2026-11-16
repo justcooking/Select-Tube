@@ -13,20 +13,22 @@ NewPipe is the inspiration (it showed what's possible). Select Tube is built sep
 ## Channel management
 
 - Channels are added from **Settings**.
-- The **first** channel can be added without waiting. The **password is set** when the first channel is added.
-- Adding a channel is protected by that password. The password **can't be changed**.
-- After the first channel, a request to add a channel requires **waiting about 2 hours** (tentative) before it takes effect.
-- Once the wait is over, the channel **becomes available automatically**.
-- While a channel is pending, it has a **cancel addition** option. The wait is the whole point.
-- **Removing** a channel needs no password and no wait.
+- Multiple channels can be added together in a single batch operation.
+- Users stage channels into a review list, review them, and confirm the batch with their password entered once.
+- The **first-ever batch** of channels can be added without waiting (all channels in this initial batch become active immediately). The **password is set** during this first batch.
+- Adding channels is protected by that password. The password **can't be changed**.
+- After the first batch, a request to add channels requires **waiting about 2 hours** (tentative, configured in `ChannelConfig`) before taking effect. The batch shares a common activation timestamp.
+- Once the wait is over, channels **become available automatically**.
+- While any channel is pending, each channel keeps its own individual **cancel addition** option. The wait is the whole point.
+- **Removing** an active channel needs no password and no wait.
 
-## Adding a channel
+## Adding channels
 
-A channel can be added by:
+Channels can be added by:
 
-- Searching for it (channel search option)
-- Entering its channel ID
-- Entering its channel URL
+- Searching for them (channel search option)
+- Entering channel IDs
+- Entering channel URLs
 
 ## Platforms
 

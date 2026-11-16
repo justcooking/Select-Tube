@@ -32,6 +32,8 @@ class ChannelRepository @Inject constructor(
 
     suspend fun addChannel(entity: ChannelEntity) = dao.insert(entity)
 
+    suspend fun addChannels(entities: List<ChannelEntity>) = dao.insertAll(entities)
+
     /** Removes a channel by ID. Used for both "Remove" (active) and "Cancel" (pending). */
     suspend fun removeChannel(channelId: String) = dao.deleteById(channelId)
 

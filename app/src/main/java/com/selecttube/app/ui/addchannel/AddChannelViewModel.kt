@@ -14,10 +14,16 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+data class StagedChannel(
+    val channelId: String,
+    val displayName: String,
+)
+
 data class AddChannelUiState(
-    val isFirstChannel: Boolean = true,
+    val isFirstBatch: Boolean = true,
     val channelInput: String = "",
     val channelName: String = "",
+    val stagedChannels: List<StagedChannel> = emptyList(),
     val passwordInput: String = "",
     val confirmPasswordInput: String = "",
     val isLoading: Boolean = false,
@@ -34,13 +40,13 @@ class AddChannelViewModel @Inject constructor(
     val uiState: StateFlow<AddChannelUiState> = _uiState.asStateFlow()
 
     init {
-        checkIfFirstChannel()
+        checkIfFirstBatch()
     }
 
-    private fun checkIfFirstChannel() {
+    private fun checkIfFirstBatch() {
         viewModelScope.launch {
             val hasPassword = repository.hasPassword()
-            _uiState.update { it.copy(isFirstChannel = !hasPassword) }
+            _uiState.update { it.copy(isFirstBatch = !hasPassword) }
         }
     }
 
@@ -60,7 +66,7 @@ class AddChannelViewModel @Inject constructor(
         _uiState.update { it.copy(confirmPasswordInput = confirm, errorMessage = null) }
     }
 
-    fun addChannel() {
+    fun stageChannel() {
         val state = _uiState.value
         val rawInput = state.channelInput.trim()
 
@@ -70,28 +76,73 @@ class AddChannelViewModel @Inject constructor(
         }
 
         val channelId = parseChannelIdentifier(rawInput)
-        val channelName = state.channelName.trim().ifBlank { channelId }
+        val displayName = state.channelName.trim().ifBlank { channelId }
+
+        // Check if already in staged list
+        if (state.stagedChannels.any { it.channelId.equals(channelId, ignoreCase = true) }) {
+            _uiState.update { it.copy(errorMessage = "Channel is already in the review list") }
+            return
+        }
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-
-            // Check if already added
+            // Check if already saved in database
             val existing = repository.getChannel(channelId)
             if (existing != null) {
                 _uiState.update {
-                    it.copy(isLoading = false, errorMessage = "This channel is already added")
+                    it.copy(errorMessage = "This channel is already subscribed in your channel list")
                 }
                 return@launch
             }
 
-            if (state.isFirstChannel) {
-                // First channel setup: requires setting a password with confirmation
+            _uiState.update {
+                it.copy(
+                    stagedChannels = it.stagedChannels + StagedChannel(channelId, displayName),
+                    channelInput = "",
+                    channelName = "",
+                    errorMessage = null,
+                )
+            }
+        }
+    }
+
+    fun removeStagedChannel(channelId: String) {
+        _uiState.update { state ->
+            state.copy(
+                stagedChannels = state.stagedChannels.filterNot { it.channelId == channelId },
+                errorMessage = null,
+            )
+        }
+    }
+
+    fun confirmBatch() {
+        val state = _uiState.value
+        val staged = state.stagedChannels
+
+        if (staged.isEmpty()) {
+            // If user typed something in input without clicking "Add to list", prompt them
+            if (state.channelInput.isNotBlank()) {
+                _uiState.update {
+                    it.copy(errorMessage = "Tap 'Add to List' first to include your entered channel")
+                }
+            } else {
+                _uiState.update {
+                    it.copy(errorMessage = "Please add at least one channel to the review list")
+                }
+            }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+
+            if (state.isFirstBatch) {
+                // First-ever batch setup: requires setting a password with confirmation
                 val password = state.passwordInput
                 val confirmPassword = state.confirmPasswordInput
 
                 if (password.isBlank()) {
                     _uiState.update {
-                        it.copy(isLoading = false, errorMessage = "Please enter a password")
+                        it.copy(isLoading = false, errorMessage = "Please set a password")
                     }
                     return@launch
                 }
@@ -106,19 +157,22 @@ class AddChannelViewModel @Inject constructor(
                 val hash = PasswordSecurity.hash(password)
                 repository.setPasswordHash(hash)
 
-                // First channel is active immediately (activationTimestamp = null)
-                val entity = ChannelEntity(
-                    channelId = channelId,
-                    name = channelName,
-                    thumbnailUrl = null,
-                    activationTimestamp = null,
-                    addedAt = System.currentTimeMillis(),
-                )
-                repository.addChannel(entity)
+                // First-ever batch: all channels are active immediately (activationTimestamp = null)
+                val now = System.currentTimeMillis()
+                val entities = staged.map { item ->
+                    ChannelEntity(
+                        channelId = item.channelId,
+                        name = item.displayName,
+                        thumbnailUrl = null,
+                        activationTimestamp = null,
+                        addedAt = now,
+                    )
+                }
+                repository.addChannels(entities)
 
                 _uiState.update { it.copy(isLoading = false, isSuccess = true) }
             } else {
-                // Subsequent channel: requires existing password verification
+                // Subsequent batch: requires existing password verification
                 val password = state.passwordInput
                 if (password.isBlank()) {
                     _uiState.update {
@@ -135,16 +189,19 @@ class AddChannelViewModel @Inject constructor(
                     return@launch
                 }
 
-                // Pending channel: activates after configured wait duration
-                val activationTime = System.currentTimeMillis() + ChannelConfig.ACTIVATION_DELAY_MS
-                val entity = ChannelEntity(
-                    channelId = channelId,
-                    name = channelName,
-                    thumbnailUrl = null,
-                    activationTimestamp = activationTime,
-                    addedAt = System.currentTimeMillis(),
-                )
-                repository.addChannel(entity)
+                // Shared activation timestamp for the whole batch
+                val now = System.currentTimeMillis()
+                val batchActivationTime = now + ChannelConfig.ACTIVATION_DELAY_MS
+                val entities = staged.map { item ->
+                    ChannelEntity(
+                        channelId = item.channelId,
+                        name = item.displayName,
+                        thumbnailUrl = null,
+                        activationTimestamp = batchActivationTime,
+                        addedAt = now,
+                    )
+                }
+                repository.addChannels(entities)
 
                 _uiState.update { it.copy(isLoading = false, isSuccess = true) }
             }
@@ -153,28 +210,23 @@ class AddChannelViewModel @Inject constructor(
 
     private fun parseChannelIdentifier(input: String): String {
         var trimmed = input.trim()
-        // Strip trailing slash if present
         if (trimmed.endsWith("/")) {
             trimmed = trimmed.substring(0, trimmed.length - 1)
         }
 
-        // If it's a URL
         if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            // e.g. https://www.youtube.com/channel/UCxxxxxx
             val channelIdx = trimmed.indexOf("/channel/")
             if (channelIdx != -1) {
                 val after = trimmed.substring(channelIdx + "/channel/".length)
                 return after.substringBefore("/").substringBefore("?")
             }
 
-            // e.g. https://www.youtube.com/@handle
             val atIdx = trimmed.indexOf("/@")
             if (atIdx != -1) {
-                val after = trimmed.substring(atIdx + 1) // includes '@'
+                val after = trimmed.substring(atIdx + 1)
                 return after.substringBefore("/").substringBefore("?")
             }
 
-            // e.g. https://www.youtube.com/c/CustomName or /user/Name
             val lastSegment = trimmed.substringAfterLast("/")
             if (lastSegment.isNotBlank()) {
                 return lastSegment.substringBefore("?")

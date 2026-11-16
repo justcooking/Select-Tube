@@ -19,6 +19,9 @@ interface ChannelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(channel: ChannelEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(channels: List<ChannelEntity>)
+
     @Query("DELETE FROM channels WHERE channelId = :id")
     suspend fun deleteById(id: String)
 
