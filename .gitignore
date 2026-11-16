@@ -1,0 +1,29 @@
+# Built output
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/captures
+/app/build
+.externalNativeBuild
+.cxx
+*.orig
+
+# Keystore files (never commit these)
+*.jks
+*.keystore
+
+# Google Services (add explicitly if you intentionally want it tracked)
+google-services.json
+
+# Kotlin / Java
+*.class
+
+# Gradle wrapper JAR is intentionally committed for reproducibility
+# gradle/wrapper/gradle-wrapper.jar
+
+# IDE-specific
+*.iws
+out/

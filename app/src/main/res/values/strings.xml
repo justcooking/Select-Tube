@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Select Tube</string>
+    <string name="settings">Settings</string>
+    <string name="add_channel">Add channel</string>
+    <string name="no_channels_title">No channels yet</string>
+    <string name="no_channels_body">Tap + to add your first channel.\nYour password is set during the first add.</string>
+    <string name="no_active_channels_title">No channels selected</string>
+    <string name="no_active_channels_body">Go to Settings to add channels. Only videos from your selected channels will appear here.</string>
+    <string name="remove">Remove</string>
+    <string name="cancel_addition">Cancel addition</string>
+    <string name="active">Active</string>
+    <string name="active_in">Active in %1$dh %2$dm</string>
+    <string name="remove_channel_title">Remove channel?</string>
+    <string name="remove_channel_body">"%1$s" will be removed from your selected channels.</string>
+</resources>

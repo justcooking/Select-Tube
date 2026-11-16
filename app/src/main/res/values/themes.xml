@@ -1,0 +1,4 @@
+<!-- Minimal theme required by the Activity; Compose handles all visual styling. -->
+<resources>
+    <style name="Theme.SelectTube" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
