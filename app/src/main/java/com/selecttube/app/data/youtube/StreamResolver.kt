@@ -68,7 +68,7 @@ class StreamResolver @Inject constructor() {
             throw StreamResolutionException("Failed to resolve video: ${e.localizedMessage ?: "unknown error"}", e)
         }
 
-        val videoId = streamInfo.url?.let { extractVideoId(it) } ?: extractVideoId(fullUrl)
+        val videoId = extractVideoId(fullUrl)
         val title = streamInfo.name.orEmpty().ifBlank { "Untitled Video" }
         val channelName = streamInfo.uploaderName.orEmpty()
         val channelId = streamInfo.uploaderUrl?.substringAfterLast("/").orEmpty()
@@ -104,30 +104,26 @@ class StreamResolver @Inject constructor() {
      */
     private fun choosePlayableStream(streamInfo: StreamInfo): PlayableStream? {
         val videoOnlyStreams = streamInfo.videoOnlyStreams.orEmpty()
+            .filter { it.isUrl && !it.content.isNullOrBlank() }
         val audioStreams = streamInfo.audioStreams.orEmpty()
+            .filter { it.isUrl && !it.content.isNullOrBlank() }
 
         // 1. Try best video-only up to 720p + best audio
         val candidateVideos = videoOnlyStreams
-            .map { stream ->
-                val h = if (stream.height > 0) stream.height
-                else stream.resolution?.filter { it.isDigit() }?.toIntOrNull() ?: 0
-                Pair(stream, h)
-            }
-            .filter { (_, h) -> h in 1..720 }
-            .sortedByDescending { (_, h) -> h }
-            .map { it.first }
+            .filter { it.height in 1..720 }
+            .sortedByDescending { it.height }
             .ifEmpty {
-                videoOnlyStreams
+                videoOnlyStreams.sortedBy { it.height }
             }
 
         val bestVideo = candidateVideos.firstOrNull()
         val bestAudio = audioStreams.maxByOrNull { it.averageBitrate }
 
         if (bestVideo != null && bestAudio != null) {
-            val videoUrl = bestVideo.url.orEmpty()
-            val audioUrl = bestAudio.url.orEmpty()
-            if (videoUrl.isNotBlank() && audioUrl.isNotBlank()) {
-                val quality = bestVideo.resolution ?: "${bestVideo.height}p"
+            val videoUrl = bestVideo.content
+            val audioUrl = bestAudio.content
+            if (!videoUrl.isNullOrBlank() && !audioUrl.isNullOrBlank()) {
+                val quality = if (bestVideo.height > 0) "${bestVideo.height}p" else "720p"
                 return PlayableStream.Adaptive(
                     videoUrl = videoUrl,
                     audioUrl = audioUrl,
@@ -139,23 +135,22 @@ class StreamResolver @Inject constructor() {
 
         // 2. Fallback to progressive streams (video + audio combined)
         val progressiveStreams = streamInfo.videoStreams.orEmpty()
+            .filter { it.isUrl && !it.content.isNullOrBlank() }
+
         val bestProgressive = progressiveStreams
-            .map { stream ->
-                val h = if (stream.height > 0) stream.height
-                else stream.resolution?.filter { it.isDigit() }?.toIntOrNull() ?: 0
-                Pair(stream, h)
-            }
-            .filter { (_, h) -> h in 1..720 }
-            .maxByOrNull { (_, h) -> h }
-            ?.first
+            .filter { it.height in 1..720 }
+            .maxByOrNull { it.height }
             ?: progressiveStreams.firstOrNull()
 
-        if (bestProgressive != null && !bestProgressive.url.isNullOrBlank()) {
-            val quality = bestProgressive.resolution ?: "${bestProgressive.height}p"
-            return PlayableStream.Progressive(
-                streamUrl = bestProgressive.url,
-                quality = quality,
-            )
+        if (bestProgressive != null) {
+            val streamUrl = bestProgressive.content
+            if (!streamUrl.isNullOrBlank()) {
+                val quality = if (bestProgressive.height > 0) "${bestProgressive.height}p" else "360p"
+                return PlayableStream.Progressive(
+                    streamUrl = streamUrl,
+                    quality = quality,
+                )
+            }
         }
 
         return null
