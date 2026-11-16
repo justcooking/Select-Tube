@@ -30,6 +30,13 @@ Channels can be added by:
 - Entering channel IDs
 - Entering channel URLs
 
+## Playback
+
+- Stream resolution is handled with NewPipe Extractor, choosing the best video-only stream up to 720p merged with the best audio stream via Media3's `MergingMediaSource` (with progressive fallback).
+- In-app player screen with custom playback controls, seek bar, time display, and quality badge.
+- Seamless background and lock-screen playback powered by an Android `MediaSessionService` (`mediaPlayback`), handling audio focus and headphones disconnect.
+- Automatic recovery and re-resolution when stream URLs expire.
+
 ## Platforms
 
 - **Android first.**

@@ -52,6 +52,7 @@ import com.selecttube.app.data.youtube.VideoFeedItem
 @Composable
 fun FeedScreen(
     onOpenSettings: () -> Unit,
+    onVideoClick: (VideoFeedItem) -> Unit = {},
     viewModel: FeedViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -120,7 +121,6 @@ fun FeedScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
-                        // If some channels failed, show their errors
                         if (state.channelErrors.isNotEmpty()) {
                             ChannelErrorsSection(errors = state.channelErrors)
                             Spacer(modifier = Modifier.height(16.dp))
@@ -144,7 +144,6 @@ fun FeedScreen(
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        // Error banners if any specific channel failed to load
                         if (state.channelErrors.isNotEmpty()) {
                             item(key = "feed_errors") {
                                 ChannelErrorsSection(
@@ -154,9 +153,8 @@ fun FeedScreen(
                             }
                         }
 
-                        // Merged and sorted videos
                         items(state.videos, key = { it.url.ifBlank { it.videoId } }) { video ->
-                            VideoItem(video = video)
+                            VideoItem(video = video, onClick = { onVideoClick(video) })
                             HorizontalDivider()
                         }
                     }
@@ -214,11 +212,11 @@ private fun ChannelErrorsSection(
 }
 
 @Composable
-private fun VideoItem(video: VideoFeedItem) {
+private fun VideoItem(video: VideoFeedItem, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = false) {}, // Tapping does nothing yet (playback comes in Phase 5)
+            .clickable(onClick = onClick),
         shape = RectangleShape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {

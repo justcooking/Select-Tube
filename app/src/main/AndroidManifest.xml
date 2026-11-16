@@ -4,10 +4,11 @@
     <!-- Network access for YouTube -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Background media playback (Phase 5) -->
+    <!-- Background media playback -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:name=".SelectTubeApp"
@@ -29,10 +30,15 @@
             </intent-filter>
         </activity>
 
-        <!--
-          Phase 5 — PlaybackService declared here so the manifest is ready.
-          The service class will be added when Phase 5 is implemented.
-        -->
+        <!-- MediaSessionService for background video & audio playback -->
+        <service
+            android:name=".playback.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
 
     </application>
 </manifest>
