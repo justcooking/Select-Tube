@@ -58,11 +58,11 @@ class YouTubeRepository @Inject constructor() {
             // Extract avatar URL from extractor
             val avatarUrl = try {
                 extractor.avatarUrl
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 null
             } ?: try {
                 extractor.avatars?.firstOrNull()?.url
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 null
             }
 
@@ -70,9 +70,9 @@ class YouTubeRepository @Inject constructor() {
                 channelId = id,
                 name = name,
                 thumbnailUrl = avatarUrl,
-                description = try { extractor.description } catch (e: Exception) { null },
-                subscriberCount = try { extractor.subscriberCount } catch (e: Exception) { -1L },
-                url = extractor.url.ifBlank { url },
+                description = try { extractor.description } catch (e: Throwable) { null },
+                subscriberCount = try { extractor.subscriberCount } catch (e: Throwable) { -1L },
+                url = try { extractor.url.ifBlank { url } } catch (e: Throwable) { url },
             )
         } catch (e: Exception) {
             // If direct channel URL failed and input was not an explicit URL or UC-ID, try searching
@@ -121,13 +121,13 @@ class YouTubeRepository @Inject constructor() {
             val channelUrl = item.url.orEmpty()
             val id = try {
                 youtubeService.channelLHFactory.fromUrl(channelUrl).id
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 channelUrl.substringAfterLast("/").substringBefore("?")
             }
 
             val avatarUrl = try {
                 item.thumbnails?.firstOrNull()?.url
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 null
             }
 
@@ -135,8 +135,8 @@ class YouTubeRepository @Inject constructor() {
                 channelId = id,
                 name = item.name.orEmpty(),
                 thumbnailUrl = avatarUrl,
-                description = try { item.description } catch (e: Exception) { null },
-                subscriberCount = try { item.subscriberCount } catch (e: Exception) { -1L },
+                description = try { item.description } catch (e: Throwable) { null },
+                subscriberCount = try { item.subscriberCount } catch (e: Throwable) { -1L },
                 url = channelUrl,
             )
         }
