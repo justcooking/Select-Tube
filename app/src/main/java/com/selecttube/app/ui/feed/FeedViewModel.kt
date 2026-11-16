@@ -3,20 +3,41 @@ package com.selecttube.app.ui.feed
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.selecttube.app.data.repository.ChannelRepository
+import com.selecttube.app.data.youtube.VideoFeedItem
+import com.selecttube.app.data.youtube.YouTubeRepository
 import com.selecttube.app.domain.Channel
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import java.util.Collections
 import javax.inject.Inject
+
+data class FeedUiState(
+    val isLoading: Boolean = false,
+    val isRefreshing: Boolean = false,
+    val videos: List<VideoFeedItem> = emptyList(),
+    val channelErrors: Map<String, String> = emptyMap(),
+    val hasActiveChannels: Boolean = false,
+)
 
 @HiltViewModel
 class FeedViewModel @Inject constructor(
-    repository: ChannelRepository,
+    private val channelRepository: ChannelRepository,
+    private val youTubeRepository: YouTubeRepository,
 ) : ViewModel() {
+
+    private val _uiState = MutableStateFlow(FeedUiState())
+    val uiState: StateFlow<FeedUiState> = _uiState.asStateFlow()
 
     private val ticker = flow {
         while (true) {
@@ -25,16 +46,133 @@ class FeedViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Only the channels that are currently active.
-     * Evaluated against the clock so pending channels that reach their activation
-     * timestamp automatically become active in the feed.
-     */
-    val activeChannels: StateFlow<List<Channel>> = combine(repository.channels, ticker) { channels, now ->
-        channels.filter { it.activationTimestamp == null || now >= it.activationTimestamp }
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5_000),
-        initialValue = emptyList(),
-    )
+    private val channelVideosMap = Collections.synchronizedMap(mutableMapOf<String, List<VideoFeedItem>>())
+    private val channelErrorsMap = Collections.synchronizedMap(mutableMapOf<String, String>())
+
+    @Volatile
+    private var activeChannelsList: List<Channel> = emptyList()
+    private var loadJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            combine(channelRepository.channels, ticker) { channels, now ->
+                channels.filter { it.activationTimestamp == null || now >= it.activationTimestamp }
+            }
+                .distinctUntilChanged { old, new ->
+                    old.map { it.channelId } == new.map { it.channelId }
+                }
+                .collect { activeList ->
+                    onActiveChannelsChanged(activeList)
+                }
+        }
+    }
+
+    private fun onActiveChannelsChanged(activeList: List<Channel>) {
+        activeChannelsList = activeList
+        val activeIds = activeList.map { it.channelId }.toSet()
+
+        channelVideosMap.keys.retainAll(activeIds)
+        channelErrorsMap.keys.retainAll(activeIds)
+
+        if (activeList.isEmpty()) {
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    isRefreshing = false,
+                    videos = emptyList(),
+                    channelErrors = emptyMap(),
+                    hasActiveChannels = false,
+                )
+            }
+            return
+        }
+
+        _uiState.update {
+            it.copy(
+                hasActiveChannels = true,
+                videos = getMergedSortedVideos(),
+                channelErrors = getErrorDisplayMap(),
+            )
+        }
+
+        val missingChannels = activeList.filter {
+            !channelVideosMap.containsKey(it.channelId) && !channelErrorsMap.containsKey(it.channelId)
+        }
+
+        if (missingChannels.isNotEmpty()) {
+            fetchChannels(missingChannels, isPullToRefresh = false)
+        }
+    }
+
+    fun refresh() {
+        val currentActive = activeChannelsList
+        if (currentActive.isEmpty()) {
+            _uiState.update { it.copy(isRefreshing = false) }
+            return
+        }
+        fetchChannels(currentActive, isPullToRefresh = true)
+    }
+
+    private fun fetchChannels(channels: List<Channel>, isPullToRefresh: Boolean) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
+            if (isPullToRefresh) {
+                _uiState.update { it.copy(isRefreshing = true) }
+            } else {
+                _uiState.update { it.copy(isLoading = channelVideosMap.isEmpty()) }
+            }
+
+            channels.map { channel ->
+                async {
+                    try {
+                        val videos = youTubeRepository.fetchChannelVideos(channel.channelId, maxVideos = 15)
+                        channelVideosMap[channel.channelId] = videos
+                        channelErrorsMap.remove(channel.channelId)
+                    } catch (e: Exception) {
+                        channelErrorsMap[channel.channelId] = e.message ?: "Failed to load channel videos"
+                        if (!channelVideosMap.containsKey(channel.channelId)) {
+                            channelVideosMap[channel.channelId] = emptyList()
+                        }
+                    }
+                }
+            }.awaitAll()
+
+            val activeIds = activeChannelsList.map { it.channelId }.toSet()
+            channelVideosMap.keys.retainAll(activeIds)
+            channelErrorsMap.keys.retainAll(activeIds)
+
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    isRefreshing = false,
+                    videos = getMergedSortedVideos(),
+                    channelErrors = getErrorDisplayMap(),
+                )
+            }
+        }
+    }
+
+    private fun getMergedSortedVideos(): List<VideoFeedItem> {
+        val activeIds = activeChannelsList.map { it.channelId }.toSet()
+        val all = mutableListOf<VideoFeedItem>()
+        synchronized(channelVideosMap) {
+            for ((id, videos) in channelVideosMap) {
+                if (id in activeIds) {
+                    all.addAll(videos)
+                }
+            }
+        }
+        return all.sortedByDescending { it.uploadTimestamp }
+    }
+
+    private fun getErrorDisplayMap(): Map<String, String> {
+        val errorMap = mutableMapOf<String, String>()
+        synchronized(channelErrorsMap) {
+            for ((id, err) in channelErrorsMap) {
+                val name = activeChannelsList.firstOrNull { it.channelId == id }?.name ?: id
+                errorMap[name] = err
+            }
+        }
+        return errorMap
+    }
 }
