@@ -1,29 +1,61 @@
-# Built output
-*.iml
-.gradle
-/local.properties
-/.idea
-.DS_Store
-/build
-/captures
-/app/build
-.externalNativeBuild
-.cxx
-*.orig
+# Built application files
+*.apk
+*.aar
+*.ap_
+*.aab
 
-# Keystore files (never commit these)
-*.jks
-*.keystore
+# Files for the ART/Dalvik VM
+*.dex
 
-# Google Services (add explicitly if you intentionally want it tracked)
-google-services.json
-
-# Kotlin / Java
+# Java class files
 *.class
 
-# Gradle wrapper JAR is intentionally committed for reproducibility
-# gradle/wrapper/gradle-wrapper.jar
-
-# IDE-specific
-*.iws
+# Generated files
+bin/
+gen/
 out/
+build/
+app/build/
+*/build/
+
+# Gradle files
+.gradle/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Log files
+*.log
+
+# Android Studio captures folder
+captures/
+
+# IntelliJ IDEA / Android Studio
+*.iml
+.idea/
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/gradle.xml
+.idea/libraries
+.idea/modules.xml
+
+# Keystore files (never commit secrets or signing keys)
+*.jks
+*.keystore
+*.p12
+*.key
+signing.properties
+
+# Google Services (Firebase / credentials)
+google-services.json
+
+# External native build folder
+.externalNativeBuild
+.cxx/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Profiler memory dumps
+*.hprof
