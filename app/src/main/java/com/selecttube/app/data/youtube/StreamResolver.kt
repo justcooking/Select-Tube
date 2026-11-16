@@ -108,10 +108,16 @@ class StreamResolver @Inject constructor() {
 
         // 1. Try best video-only up to 720p + best audio
         val candidateVideos = videoOnlyStreams
-            .filter { it.height > 0 && it.height <= 720 }
-            .sortedByDescending { it.height }
+            .map { stream ->
+                val h = if (stream.height > 0) stream.height
+                else stream.resolution?.filter { it.isDigit() }?.toIntOrNull() ?: 0
+                Pair(stream, h)
+            }
+            .filter { (_, h) -> h in 1..720 }
+            .sortedByDescending { (_, h) -> h }
+            .map { it.first }
             .ifEmpty {
-                videoOnlyStreams.sortedBy { it.height }
+                videoOnlyStreams
             }
 
         val bestVideo = candidateVideos.firstOrNull()
@@ -134,9 +140,14 @@ class StreamResolver @Inject constructor() {
         // 2. Fallback to progressive streams (video + audio combined)
         val progressiveStreams = streamInfo.videoStreams.orEmpty()
         val bestProgressive = progressiveStreams
-            .filter { it.height > 0 && it.height <= 720 }
-            .maxByOrNull { it.height }
-            ?: progressiveStreams.maxByOrNull { it.height }
+            .map { stream ->
+                val h = if (stream.height > 0) stream.height
+                else stream.resolution?.filter { it.isDigit() }?.toIntOrNull() ?: 0
+                Pair(stream, h)
+            }
+            .filter { (_, h) -> h in 1..720 }
+            .maxByOrNull { (_, h) -> h }
+            ?.first
             ?: progressiveStreams.firstOrNull()
 
         if (bestProgressive != null && !bestProgressive.url.isNullOrBlank()) {

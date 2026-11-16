@@ -126,6 +126,7 @@ class PlayerManager @Inject constructor(
             if (!player.isPlaying) {
                 player.play()
             }
+            startPlaybackService()
             return
         }
 
@@ -148,7 +149,7 @@ class PlayerManager @Inject constructor(
             )
         }
 
-        startForegroundService()
+        startPlaybackService()
 
         resolveJob = scope.launch {
             try {
@@ -163,6 +164,8 @@ class PlayerManager @Inject constructor(
                 player.setMediaSource(mediaSource)
                 player.prepare()
                 player.playWhenReady = true
+
+                startPlaybackService()
 
                 _playbackState.update {
                     it.copy(
@@ -195,6 +198,7 @@ class PlayerManager @Inject constructor(
             player.pause()
         } else {
             player.play()
+            startPlaybackService()
         }
     }
 
@@ -302,16 +306,12 @@ class PlayerManager @Inject constructor(
         }
     }
 
-    private fun startForegroundService() {
-        val intent = Intent(context, PlaybackService::class.java)
+    private fun startPlaybackService() {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            val intent = Intent(context, PlaybackService::class.java)
+            context.startService(intent)
         } catch (e: Exception) {
-            // Service will be managed directly
+            // Service start exception safety
         }
     }
 }
