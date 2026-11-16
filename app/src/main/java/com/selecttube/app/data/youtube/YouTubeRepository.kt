@@ -55,12 +55,8 @@ class YouTubeRepository @Inject constructor() {
                 throw ChannelNotFoundException("Could not find channel details for '$trimmed'.")
             }
 
-            // Extract avatar URL from extractor
+            // Extract avatar URL from extractor (NewPipe Extractor v0.26.5 uses avatars)
             val avatarUrl = try {
-                extractor.avatarUrl
-            } catch (e: Throwable) {
-                null
-            } ?: try {
                 extractor.avatars?.firstOrNull()?.url
             } catch (e: Throwable) {
                 null
