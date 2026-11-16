@@ -30,6 +30,7 @@ android {
     }
 
     compileOptions {
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
@@ -44,6 +45,9 @@ android {
 }
 
 dependencies {
+    // Desugaring
+    coreLibraryDesugaring(libs.desugar.jdk.libs)
+
     // Core
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)
@@ -81,6 +85,9 @@ dependencies {
 
     // BCrypt (password hashing — used from Phase 2)
     implementation(libs.bcrypt)
+
+    // Networking for NewPipe Extractor
+    implementation(libs.okhttp)
 
     // NewPipe Extractor (YouTube access — used from Phase 3)
     implementation(libs.newpipe.extractor)

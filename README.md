@@ -39,3 +39,8 @@ Channels can be added by:
 
 - Fully vibecoded on Google Antigravity.
 - Connected to GitHub.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 (GPLv3) — see the [LICENSE](LICENSE) file for details.
+It uses [NewPipe Extractor](https://github.com/TeamNewPipe/NewPipeExtractor), which is licensed under GPLv3.

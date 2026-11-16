@@ -5,6 +5,9 @@ import androidx.lifecycle.viewModelScope
 import com.selecttube.app.config.ChannelConfig
 import com.selecttube.app.data.db.ChannelEntity
 import com.selecttube.app.data.repository.ChannelRepository
+import com.selecttube.app.data.youtube.ChannelNotFoundException
+import com.selecttube.app.data.youtube.ResolvedChannel
+import com.selecttube.app.data.youtube.YouTubeRepository
 import com.selecttube.app.util.PasswordSecurity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,16 +17,30 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+enum class AddChannelTab {
+    SEARCH,
+    DIRECT_INPUT,
+}
+
 data class StagedChannel(
     val channelId: String,
     val displayName: String,
+    val thumbnailUrl: String?,
 )
 
 data class AddChannelUiState(
     val isFirstBatch: Boolean = true,
-    val channelInput: String = "",
-    val channelName: String = "",
+    val selectedTab: AddChannelTab = AddChannelTab.SEARCH,
+    // Search tab
+    val searchQuery: String = "",
+    val isSearching: Boolean = false,
+    val searchResults: List<ResolvedChannel> = emptyList(),
+    // Direct input tab
+    val directInput: String = "",
+    val isResolving: Boolean = false,
+    // Staged review list
     val stagedChannels: List<StagedChannel> = emptyList(),
+    // Password
     val passwordInput: String = "",
     val confirmPasswordInput: String = "",
     val isLoading: Boolean = false,
@@ -33,7 +50,8 @@ data class AddChannelUiState(
 
 @HiltViewModel
 class AddChannelViewModel @Inject constructor(
-    private val repository: ChannelRepository,
+    private val channelRepository: ChannelRepository,
+    private val youTubeRepository: YouTubeRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(AddChannelUiState())
@@ -45,17 +63,21 @@ class AddChannelViewModel @Inject constructor(
 
     private fun checkIfFirstBatch() {
         viewModelScope.launch {
-            val hasPassword = repository.hasPassword()
+            val hasPassword = channelRepository.hasPassword()
             _uiState.update { it.copy(isFirstBatch = !hasPassword) }
         }
     }
 
-    fun onChannelInputChange(input: String) {
-        _uiState.update { it.copy(channelInput = input, errorMessage = null) }
+    fun onTabSelected(tab: AddChannelTab) {
+        _uiState.update { it.copy(selectedTab = tab, errorMessage = null) }
     }
 
-    fun onChannelNameChange(name: String) {
-        _uiState.update { it.copy(channelName = name, errorMessage = null) }
+    fun onSearchQueryChange(query: String) {
+        _uiState.update { it.copy(searchQuery = query, errorMessage = null) }
+    }
+
+    fun onDirectInputChange(input: String) {
+        _uiState.update { it.copy(directInput = input, errorMessage = null) }
     }
 
     fun onPasswordInputChange(password: String) {
@@ -66,41 +88,104 @@ class AddChannelViewModel @Inject constructor(
         _uiState.update { it.copy(confirmPasswordInput = confirm, errorMessage = null) }
     }
 
-    fun stageChannel() {
-        val state = _uiState.value
-        val rawInput = state.channelInput.trim()
-
-        if (rawInput.isBlank()) {
-            _uiState.update { it.copy(errorMessage = "Please enter a channel ID or URL") }
-            return
-        }
-
-        val channelId = parseChannelIdentifier(rawInput)
-        val displayName = state.channelName.trim().ifBlank { channelId }
-
-        // Check if already in staged list
-        if (state.stagedChannels.any { it.channelId.equals(channelId, ignoreCase = true) }) {
-            _uiState.update { it.copy(errorMessage = "Channel is already in the review list") }
+    fun searchChannels() {
+        val query = _uiState.value.searchQuery.trim()
+        if (query.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "Please enter a search query") }
             return
         }
 
         viewModelScope.launch {
-            // Check if already saved in database
-            val existing = repository.getChannel(channelId)
+            _uiState.update { it.copy(isSearching = true, errorMessage = null) }
+            try {
+                val results = youTubeRepository.searchChannels(query)
+                if (results.isEmpty()) {
+                    _uiState.update {
+                        it.copy(
+                            isSearching = false,
+                            searchResults = emptyList(),
+                            errorMessage = "No channels found matching '$query'",
+                        )
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            isSearching = false,
+                            searchResults = results,
+                            errorMessage = null,
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSearching = false,
+                        errorMessage = "Search failed: ${e.message ?: "network error"}",
+                    )
+                }
+            }
+        }
+    }
+
+    fun addResolvedChannelToStaged(channel: ResolvedChannel) {
+        val state = _uiState.value
+
+        // Check if already in staged list
+        if (state.stagedChannels.any { it.channelId.equals(channel.channelId, ignoreCase = true) }) {
+            _uiState.update { it.copy(errorMessage = "'${channel.name}' is already in your review list") }
+            return
+        }
+
+        viewModelScope.launch {
+            // Check if already in database
+            val existing = channelRepository.getChannel(channel.channelId)
             if (existing != null) {
                 _uiState.update {
-                    it.copy(errorMessage = "This channel is already subscribed in your channel list")
+                    it.copy(errorMessage = "'${channel.name}' is already subscribed in your channel list")
                 }
                 return@launch
             }
 
             _uiState.update {
                 it.copy(
-                    stagedChannels = it.stagedChannels + StagedChannel(channelId, displayName),
-                    channelInput = "",
-                    channelName = "",
+                    stagedChannels = it.stagedChannels + StagedChannel(
+                        channelId = channel.channelId,
+                        displayName = channel.name,
+                        thumbnailUrl = channel.thumbnailUrl,
+                    ),
                     errorMessage = null,
                 )
+            }
+        }
+    }
+
+    fun resolveAndStageDirectInput() {
+        val input = _uiState.value.directInput.trim()
+        if (input.isBlank()) {
+            _uiState.update { it.copy(errorMessage = "Please enter a channel ID, URL, or handle") }
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isResolving = true, errorMessage = null) }
+            try {
+                val resolved = youTubeRepository.resolveChannel(input)
+                addResolvedChannelToStaged(resolved)
+                _uiState.update { it.copy(isResolving = false, directInput = "") }
+            } catch (e: ChannelNotFoundException) {
+                _uiState.update {
+                    it.copy(
+                        isResolving = false,
+                        errorMessage = e.message ?: "Channel could not be found.",
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isResolving = false,
+                        errorMessage = "Failed to resolve channel: ${e.message ?: "Unknown error"}",
+                    )
+                }
             }
         }
     }
@@ -119,15 +204,8 @@ class AddChannelViewModel @Inject constructor(
         val staged = state.stagedChannels
 
         if (staged.isEmpty()) {
-            // If user typed something in input without clicking "Add to list", prompt them
-            if (state.channelInput.isNotBlank()) {
-                _uiState.update {
-                    it.copy(errorMessage = "Tap 'Add to List' first to include your entered channel")
-                }
-            } else {
-                _uiState.update {
-                    it.copy(errorMessage = "Please add at least one channel to the review list")
-                }
+            _uiState.update {
+                it.copy(errorMessage = "Please add at least one channel to the review list")
             }
             return
         }
@@ -136,7 +214,7 @@ class AddChannelViewModel @Inject constructor(
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
 
             if (state.isFirstBatch) {
-                // First-ever batch setup: requires setting a password with confirmation
+                // First-ever batch setup: password entry twice
                 val password = state.passwordInput
                 val confirmPassword = state.confirmPasswordInput
 
@@ -153,26 +231,25 @@ class AddChannelViewModel @Inject constructor(
                     return@launch
                 }
 
-                // Hash and store password
                 val hash = PasswordSecurity.hash(password)
-                repository.setPasswordHash(hash)
+                channelRepository.setPasswordHash(hash)
 
-                // First-ever batch: all channels are active immediately (activationTimestamp = null)
+                // First-ever batch: active immediately
                 val now = System.currentTimeMillis()
                 val entities = staged.map { item ->
                     ChannelEntity(
                         channelId = item.channelId,
                         name = item.displayName,
-                        thumbnailUrl = null,
+                        thumbnailUrl = item.thumbnailUrl,
                         activationTimestamp = null,
                         addedAt = now,
                     )
                 }
-                repository.addChannels(entities)
+                channelRepository.addChannels(entities)
 
                 _uiState.update { it.copy(isLoading = false, isSuccess = true) }
             } else {
-                // Subsequent batch: requires existing password verification
+                // Subsequent batch: verify existing password
                 val password = state.passwordInput
                 if (password.isBlank()) {
                     _uiState.update {
@@ -181,7 +258,7 @@ class AddChannelViewModel @Inject constructor(
                     return@launch
                 }
 
-                val storedHash = repository.getPasswordHash()
+                val storedHash = channelRepository.getPasswordHash()
                 if (storedHash == null || !PasswordSecurity.verify(password, storedHash)) {
                     _uiState.update {
                         it.copy(isLoading = false, errorMessage = "Incorrect password")
@@ -189,50 +266,22 @@ class AddChannelViewModel @Inject constructor(
                     return@launch
                 }
 
-                // Shared activation timestamp for the whole batch
+                // Subsequent batch: shared 2-hour wait
                 val now = System.currentTimeMillis()
                 val batchActivationTime = now + ChannelConfig.ACTIVATION_DELAY_MS
                 val entities = staged.map { item ->
                     ChannelEntity(
                         channelId = item.channelId,
                         name = item.displayName,
-                        thumbnailUrl = null,
+                        thumbnailUrl = item.thumbnailUrl,
                         activationTimestamp = batchActivationTime,
                         addedAt = now,
                     )
                 }
-                repository.addChannels(entities)
+                channelRepository.addChannels(entities)
 
                 _uiState.update { it.copy(isLoading = false, isSuccess = true) }
             }
         }
-    }
-
-    private fun parseChannelIdentifier(input: String): String {
-        var trimmed = input.trim()
-        if (trimmed.endsWith("/")) {
-            trimmed = trimmed.substring(0, trimmed.length - 1)
-        }
-
-        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
-            val channelIdx = trimmed.indexOf("/channel/")
-            if (channelIdx != -1) {
-                val after = trimmed.substring(channelIdx + "/channel/".length)
-                return after.substringBefore("/").substringBefore("?")
-            }
-
-            val atIdx = trimmed.indexOf("/@")
-            if (atIdx != -1) {
-                val after = trimmed.substring(atIdx + 1)
-                return after.substringBefore("/").substringBefore("?")
-            }
-
-            val lastSegment = trimmed.substringAfterLast("/")
-            if (lastSegment.isNotBlank()) {
-                return lastSegment.substringBefore("?")
-            }
-        }
-
-        return trimmed
     }
 }

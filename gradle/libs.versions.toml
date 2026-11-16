@@ -14,6 +14,8 @@ coroutines             = "1.9.0"
 datastore              = "1.1.1"
 bcrypt                 = "0.9.0"
 newpipeExtractor       = "v0.24.2"
+okhttp                 = "4.12.0"
+desugarJdkLibs         = "2.1.2"
 media3                 = "1.4.1"
 coil                   = "2.7.0"
 
@@ -50,6 +52,10 @@ hilt-navigation-compose            = { group = "androidx.hilt",          name = 
 kotlinx-coroutines-android         = { group = "org.jetbrains.kotlinx",  name = "kotlinx-coroutines-android",  version.ref = "coroutines" }
 # BCrypt
 bcrypt                             = { group = "at.favre.lib",           name = "bcrypt",                      version.ref = "bcrypt" }
+# OkHttp (network client for NewPipeExtractor)
+okhttp                             = { group = "com.squareup.okhttp3",   name = "okhttp",                      version.ref = "okhttp" }
+# Desugaring
+desugar-jdk-libs                   = { group = "com.android.tools",      name = "desugar_jdk_libs",            version.ref = "desugarJdkLibs" }
 # NewPipe Extractor (JitPack)
 newpipe-extractor                  = { group = "com.github.TeamNewPipe", name = "NewPipeExtractor",            version.ref = "newpipeExtractor" }
 # Media3 / ExoPlayer
