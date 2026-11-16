@@ -61,6 +61,8 @@ class PlayerManager @Inject constructor(
         )
         .setHandleAudioBecomingNoisy(true)
         .setWakeMode(C.WAKE_MODE_NETWORK)
+        .setSeekBackIncrementMs(10_000L)
+        .setSeekForwardIncrementMs(10_000L)
         .build()
 
     private val _playbackState = MutableStateFlow(PlaybackState())
@@ -137,6 +139,13 @@ class PlayerManager @Inject constructor(
         player.stop()
         player.clearMediaItems()
 
+        val initialMetadata = MediaMetadata.Builder()
+            .setTitle(initialTitle ?: currentPlaybackInfo?.title ?: "Loading...")
+            .setArtist(initialChannel ?: currentPlaybackInfo?.channelName ?: "")
+            .setArtworkUri(initialThumbnail?.let { Uri.parse(it) } ?: currentPlaybackInfo?.thumbnailUrl?.let { Uri.parse(it) })
+            .build()
+        player.setPlaylistMetadata(initialMetadata)
+
         _playbackState.update {
             PlaybackState(
                 isResolving = true,
@@ -159,6 +168,13 @@ class PlayerManager @Inject constructor(
                     is PlayableStream.Adaptive -> s.videoQuality
                     is PlayableStream.Progressive -> s.quality
                 }
+
+                val metadata = MediaMetadata.Builder()
+                    .setTitle(info.title)
+                    .setArtist(info.channelName)
+                    .setArtworkUri(info.thumbnailUrl?.let { Uri.parse(it) })
+                    .build()
+                player.setPlaylistMetadata(metadata)
 
                 val mediaSource = buildMediaSource(info)
                 player.setMediaSource(mediaSource)
@@ -230,6 +246,12 @@ class PlayerManager @Inject constructor(
                     _playbackState.update { it.copy(isResolving = true, error = null) }
                     val freshInfo = streamResolver.reResolve(currentPlaybackInfo!!)
                     currentPlaybackInfo = freshInfo
+                    val metadata = MediaMetadata.Builder()
+                        .setTitle(freshInfo.title)
+                        .setArtist(freshInfo.channelName)
+                        .setArtworkUri(freshInfo.thumbnailUrl?.let { Uri.parse(it) })
+                        .build()
+                    player.setPlaylistMetadata(metadata)
                     val mediaSource = buildMediaSource(freshInfo)
                     player.setMediaSource(mediaSource, resumePosition)
                     player.prepare()
@@ -283,10 +305,12 @@ class PlayerManager @Inject constructor(
         return when (val stream = playbackInfo.stream) {
             is PlayableStream.Adaptive -> {
                 val videoItem = MediaItem.Builder()
+                    .setMediaId(playbackInfo.videoId)
                     .setUri(Uri.parse(stream.videoUrl))
                     .setMediaMetadata(metadata)
                     .build()
                 val audioItem = MediaItem.Builder()
+                    .setMediaId("${playbackInfo.videoId}_audio")
                     .setUri(Uri.parse(stream.audioUrl))
                     .setMediaMetadata(metadata)
                     .build()
@@ -296,6 +320,7 @@ class PlayerManager @Inject constructor(
             }
             is PlayableStream.Progressive -> {
                 val mediaItem = MediaItem.Builder()
+                    .setMediaId(playbackInfo.videoId)
                     .setUri(Uri.parse(stream.streamUrl))
                     .setMediaMetadata(metadata)
                     .build()

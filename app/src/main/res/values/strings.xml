@@ -12,4 +12,5 @@
     <string name="active_in">Active in %1$dh %2$dm</string>
     <string name="remove_channel_title">Remove channel?</string>
     <string name="remove_channel_body">"%1$s" will be removed from your selected channels.</string>
+    <string name="playback_notification_channel_name">Video Playback</string>
 </resources>
