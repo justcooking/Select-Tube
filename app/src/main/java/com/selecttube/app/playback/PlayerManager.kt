@@ -165,8 +165,6 @@ class PlayerManager @Inject constructor(
                 player.prepare()
                 player.playWhenReady = true
 
-                startPlaybackService()
-
                 _playbackState.update {
                     it.copy(
                         playbackInfo = info,
@@ -310,8 +308,11 @@ class PlayerManager @Inject constructor(
         try {
             val intent = Intent(context, PlaybackService::class.java)
             context.startService(intent)
+        } catch (e: IllegalStateException) {
+            // Android 12+ (API 31+) restricts starting services from the background
+            // The service is started synchronously upon user interaction in the foreground
         } catch (e: Exception) {
-            // Service start exception safety
+            // Catch other unexpected platform security/runtime exceptions
         }
     }
 }
