@@ -151,20 +151,22 @@ fun MiniPlayer(
                         )
                     }
 
-                    AndroidView(
-                        factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                this.player = player
-                                useController = false
-                            }
-                        },
-                        update = { playerView ->
-                            if (playerView.player != player) {
-                                playerView.player = player
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    if (!playbackState.isBackgroundOnly) {
+                        AndroidView(
+                            factory = { ctx ->
+                                PlayerView(ctx).apply {
+                                    this.player = player
+                                    useController = false
+                                }
+                            },
+                            update = { playerView ->
+                                if (playerView.player != player) {
+                                    playerView.player = player
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
 
                     if (playbackState.isResolving || playbackState.isBuffering) {
                         Box(

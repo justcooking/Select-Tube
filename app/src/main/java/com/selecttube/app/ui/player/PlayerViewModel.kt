@@ -45,4 +45,19 @@ class PlayerViewModel @Inject constructor(
     fun stop() {
         playerManager.stop()
     }
+
+    fun setQuality(quality: String) {
+        playerManager.setQuality(quality)
+    }
+
+    fun setBackgroundOnly(enabled: Boolean) {
+        playerManager.setBackgroundOnly(enabled)
+    }
+
+    fun resumeFromBackground() {
+        playerManager.setBackgroundOnly(false)
+        if (!player.isPlaying) {
+            player.play()
+        }
+    }
 }

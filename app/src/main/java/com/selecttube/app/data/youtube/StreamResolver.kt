@@ -34,6 +34,11 @@ data class ResolvedPlaybackInfo(
     val durationSeconds: Long,
     val stream: PlayableStream,
     val originalUrl: String,
+    val viewCount: Long = -1L,
+    val likeCount: Long = -1L,
+    val subscriberCount: Long = -1L,
+    val channelAvatarUrl: String? = null,
+    val availableQualities: List<String> = emptyList(),
 )
 
 class StreamResolutionException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -46,6 +51,7 @@ class StreamResolutionException(message: String, cause: Throwable? = null) : Exc
 class StreamResolver @Inject constructor() {
 
     private val youtubeService = ServiceList.YouTube
+    private val streamInfoCache = java.util.concurrent.ConcurrentHashMap<String, StreamInfo>()
 
     /**
      * Resolves a video to playable streams.
@@ -68,12 +74,24 @@ class StreamResolver @Inject constructor() {
             throw StreamResolutionException("Failed to resolve video: ${e.localizedMessage ?: "unknown error"}", e)
         }
 
+        streamInfoCache[fullUrl] = streamInfo
+
         val videoId = extractVideoId(fullUrl)
         val title = streamInfo.name.orEmpty().ifBlank { "Untitled Video" }
         val channelName = streamInfo.uploaderName.orEmpty()
         val channelId = streamInfo.uploaderUrl?.substringAfterLast("/").orEmpty()
         val thumbnailUrl = streamInfo.thumbnails?.lastOrNull()?.url ?: streamInfo.thumbnails?.firstOrNull()?.url
         val durationSeconds = streamInfo.duration
+
+        val viewCount = streamInfo.viewCount
+        val likeCount = streamInfo.likeCount
+        val subscriberCount = streamInfo.uploaderSubscriberCount
+        val channelAvatarUrl = streamInfo.uploaderAvatars?.lastOrNull()?.url
+
+        val availableQualities = (streamInfo.videoOnlyStreams.orEmpty() + streamInfo.videoStreams.orEmpty())
+            .mapNotNull { if (it.height > 0) "${it.height}p" else null }
+            .distinct()
+            .sortedByDescending { it.removeSuffix("p").toIntOrNull() ?: 0 }
 
         val playableStream = choosePlayableStream(streamInfo)
             ?: throw StreamResolutionException("No playable streams found for this video.")
@@ -87,6 +105,11 @@ class StreamResolver @Inject constructor() {
             durationSeconds = durationSeconds,
             stream = playableStream,
             originalUrl = fullUrl,
+            viewCount = viewCount,
+            likeCount = likeCount,
+            subscriberCount = subscriberCount,
+            channelAvatarUrl = channelAvatarUrl,
+            availableQualities = availableQualities,
         )
     }
 
@@ -98,25 +121,42 @@ class StreamResolver @Inject constructor() {
     }
 
     /**
+     * Obtains a PlayableStream for a specific target quality using cached StreamInfo.
+     */
+    fun resolveQuality(originalUrl: String, quality: String): PlayableStream? {
+        val streamInfo = streamInfoCache[originalUrl] ?: return null
+        return choosePlayableStream(streamInfo, quality)
+    }
+
+    /**
      * Selects the best stream:
-     * 1. Best video-only stream <= 720p + best audio-only stream.
+     * 1. Best video-only stream <= 720p (or targetQuality) + best audio-only stream.
      * 2. Fallback: best progressive stream <= 720p (or best progressive available).
      */
-    private fun choosePlayableStream(streamInfo: StreamInfo): PlayableStream? {
+    fun choosePlayableStream(streamInfo: StreamInfo, targetQuality: String? = null): PlayableStream? {
         val videoOnlyStreams = streamInfo.videoOnlyStreams.orEmpty()
             .filter { it.isUrl && !it.content.isNullOrBlank() }
         val audioStreams = streamInfo.audioStreams.orEmpty()
             .filter { it.isUrl && !it.content.isNullOrBlank() }
 
-        // 1. Try best video-only up to 720p + best audio
-        val candidateVideos = videoOnlyStreams
-            .filter { it.height in 1..720 }
-            .sortedByDescending { it.height }
-            .ifEmpty {
-                videoOnlyStreams.sortedBy { it.height }
-            }
+        val targetHeight = targetQuality?.removeSuffix("p")?.toIntOrNull()
 
-        val bestVideo = candidateVideos.firstOrNull()
+        // 1. Try best video-only stream
+        val candidateVideos = if (targetHeight != null) {
+            videoOnlyStreams.filter { it.height == targetHeight }
+                .ifEmpty {
+                    videoOnlyStreams.filter { it.height <= targetHeight }.sortedByDescending { it.height }
+                }
+        } else {
+            videoOnlyStreams
+                .filter { it.height in 1..720 }
+                .sortedByDescending { it.height }
+                .ifEmpty {
+                    videoOnlyStreams.sortedBy { it.height }
+                }
+        }
+
+        val bestVideo = candidateVideos.firstOrNull() ?: videoOnlyStreams.maxByOrNull { it.height }
         val bestAudio = audioStreams.maxByOrNull { it.averageBitrate }
 
         if (bestVideo != null && bestAudio != null) {
@@ -137,10 +177,15 @@ class StreamResolver @Inject constructor() {
         val progressiveStreams = streamInfo.videoStreams.orEmpty()
             .filter { it.isUrl && !it.content.isNullOrBlank() }
 
-        val bestProgressive = progressiveStreams
-            .filter { it.height in 1..720 }
-            .maxByOrNull { it.height }
-            ?: progressiveStreams.firstOrNull()
+        val bestProgressive = if (targetHeight != null) {
+            progressiveStreams.firstOrNull { it.height == targetHeight }
+                ?: progressiveStreams.maxByOrNull { it.height }
+        } else {
+            progressiveStreams
+                .filter { it.height in 1..720 }
+                .maxByOrNull { it.height }
+                ?: progressiveStreams.firstOrNull()
+        }
 
         if (bestProgressive != null) {
             val streamUrl = bestProgressive.content

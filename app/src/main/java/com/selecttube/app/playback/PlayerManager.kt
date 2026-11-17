@@ -56,6 +56,7 @@ data class PlaybackState(
     val durationMs: Long = 0L,
     val error: String? = null,
     val videoQuality: String? = null,
+    val isBackgroundOnly: Boolean = false,
 )
 
 /**
@@ -251,6 +252,13 @@ class PlayerManager @Inject constructor(
         hasRetriedExpiration = false
         resolveJob?.cancel()
 
+        if (_playbackState.value.isBackgroundOnly) {
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+                .build()
+        }
+
         player.stop()
         player.clearMediaItems()
 
@@ -346,11 +354,26 @@ class PlayerManager @Inject constructor(
 
     fun stop() {
         resolveJob?.cancel()
+        if (_playbackState.value.isBackgroundOnly) {
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
+                .build()
+        }
         player.stop()
         player.clearMediaItems()
         currentPlaybackInfo = null
         lastUrlOrId = null
         _playbackState.update { PlaybackState() }
+    }
+
+    fun setBackgroundOnly(enabled: Boolean) {
+        if (_playbackState.value.isBackgroundOnly == enabled) return
+        player.trackSelectionParameters = player.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, enabled)
+            .build()
+        _playbackState.update { it.copy(isBackgroundOnly = enabled) }
     }
 
     fun seekTo(positionMs: Long) {
@@ -366,6 +389,49 @@ class PlayerManager @Inject constructor(
     fun seekBackward(deltaMs: Long = 10_000L) {
         val newPos = (player.currentPosition - deltaMs).coerceAtLeast(0L)
         seekTo(newPos)
+    }
+
+    fun setQuality(quality: String) {
+        val currentInfo = currentPlaybackInfo ?: return
+        val newStream = streamResolver.resolveQuality(currentInfo.originalUrl, quality) ?: return
+
+        val newInfo = currentInfo.copy(stream = newStream)
+        currentPlaybackInfo = newInfo
+        streamMap[newInfo.videoId] = newStream
+
+        val qualityLabel = when (newStream) {
+            is PlayableStream.Adaptive -> newStream.videoQuality
+            is PlayableStream.Progressive -> newStream.quality
+        }
+
+        val currentPos = player.currentPosition
+        val wasPlaying = player.isPlaying
+
+        val metadata = MediaMetadata.Builder()
+            .setTitle(newInfo.title)
+            .setArtist(newInfo.channelName)
+            .setArtworkUri(newInfo.thumbnailUrl?.let { Uri.parse(it) })
+            .build()
+        player.setPlaylistMetadata(metadata)
+
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(newInfo.videoId)
+            .setUri(Uri.parse(newInfo.originalUrl))
+            .setMediaMetadata(metadata)
+            .build()
+
+        player.setMediaItem(mediaItem, currentPos)
+        player.prepare()
+        if (wasPlaying) {
+            player.play()
+        }
+
+        _playbackState.update {
+            it.copy(
+                playbackInfo = newInfo,
+                videoQuality = qualityLabel,
+            )
+        }
     }
 
     private fun handlePlayerError(error: PlaybackException) {
