@@ -1,10 +1,12 @@
 package com.selecttube.app.playback
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -18,6 +20,9 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import com.google.common.util.concurrent.ListenableFuture
 import com.selecttube.app.data.youtube.PlayableStream
 import com.selecttube.app.data.youtube.ResolvedPlaybackInfo
 import com.selecttube.app.data.youtube.StreamResolver
@@ -142,7 +147,13 @@ class PlayerManager @Inject constructor(
     private var hasRetriedExpiration = false
     private var resolveJob: Job? = null
 
+    // Persistent MediaController connection to PlaybackService so MediaSessionService
+    // registers the session and drives the system media notification.
+    private var controllerFuture: ListenableFuture<MediaController>? = null
+    private var mediaController: MediaController? = null
+
     init {
+        ensureMediaControllerConnected()
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _playbackState.update {
@@ -390,7 +401,24 @@ class PlayerManager @Inject constructor(
         }
     }
 
+    private fun ensureMediaControllerConnected() {
+        if (controllerFuture == null) {
+            val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
+            val future = MediaController.Builder(context, token).buildAsync()
+            controllerFuture = future
+            future.addListener({
+                try {
+                    mediaController = future.get()
+                    Log.d(LOG_TAG, "MediaController connected: $mediaController")
+                } catch (e: Exception) {
+                    Log.e(LOG_TAG, "Failed to connect MediaController", e)
+                }
+            }, ContextCompat.getMainExecutor(context))
+        }
+    }
+
     private fun startPlaybackService() {
+        ensureMediaControllerConnected()
         try {
             val intent = Intent(context, PlaybackService::class.java)
             // startForegroundService is required so the service can call startForeground()

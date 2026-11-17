@@ -68,9 +68,11 @@ class PlaybackService : MediaSessionService() {
 
         sharedPlayer.addListener(playerListener)
 
-        mediaSession = MediaSession.Builder(this, sharedPlayer)
+        val session = MediaSession.Builder(this, sharedPlayer)
             .setSessionActivity(sessionActivityPendingIntent)
             .build()
+        mediaSession = session
+        addSession(session)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -103,10 +105,8 @@ class PlaybackService : MediaSessionService() {
     override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
         Log.d(
             LOG_TAG,
-            "PlaybackService.onUpdateNotification: " +
-                "startInForegroundRequired=$startInForegroundRequired, " +
-                "mediaMetadata.title='${session.player.mediaMetadata.title}', " +
-                "currentMediaItem?.mediaId='${session.player.currentMediaItem?.mediaId}'",
+            "PlaybackService.onUpdateNotification called with title: '${session.player.mediaMetadata.title}', " +
+                "startInForegroundRequired=$startInForegroundRequired",
         )
 
         // Always let the default provider run. It will call startForeground() internally when
@@ -121,6 +121,7 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
+        Log.d(LOG_TAG, "PlaybackService.onGetSession called: ${controllerInfo.packageName}")
         return mediaSession
     }
 
@@ -138,6 +139,7 @@ class PlaybackService : MediaSessionService() {
         Log.d(LOG_TAG, "PlaybackService.onDestroy")
         playerManager.player.removeListener(playerListener)
         mediaSession?.run {
+            removeSession(this)
             // Do NOT release the player — it is a @Singleton managed by PlayerManager.
             release()
             mediaSession = null
