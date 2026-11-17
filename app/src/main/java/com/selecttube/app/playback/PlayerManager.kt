@@ -176,8 +176,19 @@ class PlayerManager @Inject constructor(
                     .build()
                 player.setPlaylistMetadata(metadata)
 
+                // Plant a real MediaItem with the correct metadata BEFORE setMediaSource.
+                // When using MergingMediaSource (video + audio adaptive streams), there is no
+                // top-level MediaItem, so player.mediaMetadata (which DefaultMediaNotificationProvider
+                // reads to build the notification) would otherwise be EMPTY.
+                // Setting the item first ensures player.currentMediaItem.mediaMetadata is
+                // populated; setMediaSource then overrides what actually plays, but the item
+                // (and its metadata) stays in the queue so the notification has title, artist,
+                // and artwork.
+                val metadataItem = buildMetadataMediaItem(info, metadata)
+                player.setMediaItem(metadataItem)
+
                 val mediaSource = buildMediaSource(info)
-                player.setMediaSource(mediaSource)
+                player.setMediaSource(mediaSource, /* resetPosition= */ true)
                 player.prepare()
                 player.playWhenReady = true
 
@@ -252,6 +263,8 @@ class PlayerManager @Inject constructor(
                         .setArtworkUri(freshInfo.thumbnailUrl?.let { Uri.parse(it) })
                         .build()
                     player.setPlaylistMetadata(metadata)
+                    val metadataItem = buildMetadataMediaItem(freshInfo, metadata)
+                    player.setMediaItem(metadataItem)
                     val mediaSource = buildMediaSource(freshInfo)
                     player.setMediaSource(mediaSource, resumePosition)
                     player.prepare()
@@ -329,13 +342,46 @@ class PlayerManager @Inject constructor(
         }
     }
 
+    /**
+     * Builds a stub MediaItem that carries full metadata but no playable URI.
+     * This is set via player.setMediaItem() before player.setMediaSource() so that
+     * player.currentMediaItem.mediaMetadata is non-empty when MergingMediaSource is used.
+     * MergingMediaSource replaces what plays, but the item (and its metadata) stays in
+     * the queue — DefaultMediaNotificationProvider reads it via player.mediaMetadata.
+     */
+    private fun buildMetadataMediaItem(
+        playbackInfo: ResolvedPlaybackInfo,
+        metadata: MediaMetadata,
+    ): MediaItem {
+        // Use the video URL as a placeholder URI. The actual source is overridden by
+        // setMediaSource(mergingSource) immediately after, so this URI is never fetched.
+        val placeholderUri = when (val s = playbackInfo.stream) {
+            is PlayableStream.Adaptive -> Uri.parse(s.videoUrl)
+            is PlayableStream.Progressive -> Uri.parse(s.streamUrl)
+        }
+        return MediaItem.Builder()
+            .setMediaId(playbackInfo.videoId)
+            .setUri(placeholderUri)
+            .setMediaMetadata(metadata)
+            .build()
+    }
+
     private fun startPlaybackService() {
         try {
             val intent = Intent(context, PlaybackService::class.java)
-            context.startService(intent)
+            // startForegroundService is required so the service can call startForeground()
+            // within Android's 10-second window (5 s on older APIs). Using plain startService()
+            // means the service stays in the background and is never promoted to foreground,
+            // so the media notification is never posted on Android 12+.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
         } catch (e: IllegalStateException) {
-            // Android 12+ (API 31+) restricts starting services from the background
-            // The service is started synchronously upon user interaction in the foreground
+            // Android 12+ restricts FGS start from the background.
+            // This call is always made from a foreground user tap, so this should not happen,
+            // but catch defensively.
         } catch (e: Exception) {
             // Catch other unexpected platform security/runtime exceptions
         }
