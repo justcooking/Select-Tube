@@ -1,6 +1,9 @@
 package com.selecttube.app.ui.navigation
 
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
@@ -32,6 +35,7 @@ fun AppNavigation(
         playbackState.playbackInfo != null
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             if (showMiniPlayer) {
                 MiniPlayer(
@@ -54,12 +58,20 @@ fun AppNavigation(
             }
         },
     ) { innerPadding ->
+        val bottomPadding = innerPadding.calculateBottomPadding()
         NavHost(
             navController = navController,
             startDestination = Screen.Feed.route,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(bottom = innerPadding.calculateBottomPadding()),
+                .padding(bottom = bottomPadding)
+                .then(
+                    if (showMiniPlayer) {
+                        Modifier.consumeWindowInsets(WindowInsets.navigationBars)
+                    } else {
+                        Modifier
+                    }
+                ),
         ) {
             composable(Screen.Feed.route) {
                 FeedScreen(

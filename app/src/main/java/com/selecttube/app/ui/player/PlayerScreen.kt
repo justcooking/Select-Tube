@@ -5,7 +5,12 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +20,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -43,20 +49,32 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
+import androidx.compose.ui.input.pointer.util.addPosition
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,7 +99,26 @@ fun PlayerScreen(
         }
     }
 
+    val dragOffsetY = remember { Animatable(0f) }
+    val density = LocalDensity.current
+
+    val collapseDistancePx = with(density) { 90.dp.toPx() }
+    val flingVelocityPx = with(density) { 600.dp.toPx() }
+    val minFlingDistancePx = with(density) { 20.dp.toPx() }
+    val maxDragDistancePx = with(density) { 250.dp.toPx() }
+
+    var hasNavigatedBack by remember { mutableStateOf(false) }
+    val triggerCollapse: () -> Unit = {
+        if (!hasNavigatedBack) {
+            hasNavigatedBack = true
+            onNavigateBack()
+        }
+    }
+
     Scaffold(
+        modifier = Modifier.offset {
+            IntOffset(0, dragOffsetY.value.roundToInt())
+        },
         topBar = {
             TopAppBar(
                 title = {
@@ -92,7 +129,7 @@ fun PlayerScreen(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(onClick = triggerCollapse) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
@@ -108,12 +145,91 @@ fun PlayerScreen(
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState()),
         ) {
+            val videoGestureModifier = Modifier.pointerInput(state.error) {
+                coroutineScope {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        val downY = down.position.y
+                        val velocityTracker = VelocityTracker()
+                        velocityTracker.addPosition(down.uptimeMillis, down.position)
+
+                        var isDragging = false
+                        var accumulatedDragY = 0f
+                        val touchSlop = viewConfiguration.touchSlop
+
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                            if (!change.pressed && change.previousPressed) {
+                                if (isDragging) {
+                                    change.consume()
+                                    val velocityY = velocityTracker.calculateVelocity().y
+                                    val shouldCollapse = accumulatedDragY >= collapseDistancePx ||
+                                        (velocityY >= flingVelocityPx && accumulatedDragY >= minFlingDistancePx)
+                                    if (shouldCollapse) {
+                                        triggerCollapse()
+                                    } else {
+                                        launch {
+                                            dragOffsetY.animateTo(
+                                                targetValue = 0f,
+                                                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    // Tap on video area toggles play/pause when no error is displayed
+                                    if (state.error == null) {
+                                        viewModel.togglePlayPause()
+                                    }
+                                }
+                                break
+                            }
+
+                            velocityTracker.addPosition(change.uptimeMillis, change.position)
+                            val deltaY = change.position.y - change.previousPosition.y
+
+                            if (!isDragging) {
+                                val totalDeltaY = change.position.y - downY
+                                if (totalDeltaY > touchSlop) {
+                                    isDragging = true
+                                    accumulatedDragY = totalDeltaY - touchSlop
+                                    change.consume()
+                                    launch {
+                                        dragOffsetY.snapTo(accumulatedDragY.coerceAtMost(maxDragDistancePx))
+                                    }
+                                } else if (totalDeltaY < -touchSlop) {
+                                    // Upward movement: leave unconsumed so parent verticalScroll handles it
+                                    break
+                                }
+                            } else {
+                                change.consume()
+                                accumulatedDragY = (accumulatedDragY + deltaY).coerceIn(0f, maxDragDistancePx)
+                                launch {
+                                    dragOffsetY.snapTo(accumulatedDragY)
+                                }
+                            }
+                        }
+
+                        if (isDragging && !hasNavigatedBack) {
+                            launch {
+                                dragOffsetY.animateTo(
+                                    targetValue = 0f,
+                                    animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Video Display Container (16:9)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
-                    .background(Color.Black),
+                    .background(Color.Black)
+                    .then(videoGestureModifier),
                 contentAlignment = Alignment.Center,
             ) {
                 AndroidView(
