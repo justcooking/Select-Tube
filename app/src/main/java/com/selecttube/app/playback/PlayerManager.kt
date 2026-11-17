@@ -14,6 +14,7 @@ import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -47,6 +49,47 @@ data class PlaybackState(
     val videoQuality: String? = null,
 )
 
+/**
+ * Custom MediaSource.Factory that resolves YouTube video streams via an in-memory map.
+ *
+ * For any MediaItem whose mediaId exists in [streamMap], it builds:
+ * - [MergingMediaSource] combining video and audio for [PlayableStream.Adaptive]
+ * - [ProgressiveMediaSource] for [PlayableStream.Progressive]
+ * Each child source is created from that same [MediaItem].
+ * Any other MediaItem is delegated to [DefaultMediaSourceFactory].
+ */
+private class CustomMediaSourceFactory(
+    private val defaultFactory: DefaultMediaSourceFactory,
+    private val progressiveFactory: ProgressiveMediaSource.Factory,
+    private val streamMap: Map<String, PlayableStream>,
+) : MediaSource.Factory by defaultFactory {
+
+    override fun createMediaSource(mediaItem: MediaItem): MediaSource {
+        val stream = streamMap[mediaItem.mediaId]
+            ?: return defaultFactory.createMediaSource(mediaItem)
+
+        return when (stream) {
+            is PlayableStream.Adaptive -> {
+                val videoItem = mediaItem.buildUpon()
+                    .setUri(Uri.parse(stream.videoUrl))
+                    .build()
+                val audioItem = mediaItem.buildUpon()
+                    .setUri(Uri.parse(stream.audioUrl))
+                    .build()
+                val videoSource = progressiveFactory.createMediaSource(videoItem)
+                val audioSource = progressiveFactory.createMediaSource(audioItem)
+                MergingMediaSource(videoSource, audioSource)
+            }
+            is PlayableStream.Progressive -> {
+                val progressiveItem = mediaItem.buildUpon()
+                    .setUri(Uri.parse(stream.streamUrl))
+                    .build()
+                progressiveFactory.createMediaSource(progressiveItem)
+            }
+        }
+    }
+}
+
 @Singleton
 class PlayerManager @Inject constructor(
     @ApplicationContext private val context: Context,
@@ -54,7 +97,30 @@ class PlayerManager @Inject constructor(
 ) {
     private val scope = CoroutineScope(Dispatchers.Main + Job())
 
+    // In-memory map of videoId -> PlayableStream
+    private val streamMap = ConcurrentHashMap<String, PlayableStream>()
+
+    private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+        .setUserAgent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/120.0.0.0 Safari/537.36",
+        )
+        .setAllowCrossProtocolRedirects(true)
+        .setConnectTimeoutMs(15_000)
+        .setReadTimeoutMs(15_000)
+
+    private val progressiveFactory = ProgressiveMediaSource.Factory(httpDataSourceFactory)
+    private val defaultMediaSourceFactory = DefaultMediaSourceFactory(context)
+
+    private val customFactory = CustomMediaSourceFactory(
+        defaultFactory = defaultMediaSourceFactory,
+        progressiveFactory = progressiveFactory,
+        streamMap = streamMap,
+    )
+
     val player: ExoPlayer = ExoPlayer.Builder(context)
+        .setMediaSourceFactory(customFactory)
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
@@ -97,11 +163,12 @@ class PlayerManager @Inject constructor(
                         currentPositionMs = player.currentPosition.coerceAtLeast(0L),
                     )
                 }
-                // Log when READY so we can verify metadata is populated at that point.
+                // Log when READY to verify metadata on the current MediaItem
                 if (playbackState == Player.STATE_READY) {
                     Log.d(
                         LOG_TAG,
-                        "STATE_READY — mediaMetadata.title='${player.mediaMetadata.title}' " +
+                        "STATE_READY — player.currentMediaItem?.mediaMetadata?.title='${player.currentMediaItem?.mediaMetadata?.title}' " +
+                            "mediaMetadata.title='${player.mediaMetadata.title}' " +
                             "currentMediaItem?.mediaId='${player.currentMediaItem?.mediaId}'",
                     )
                 }
@@ -190,17 +257,20 @@ class PlayerManager @Inject constructor(
                     .build()
                 player.setPlaylistMetadata(metadata)
 
-                // Build the media source with metadata baked into every MediaItem.
-                // For MergingMediaSource (adaptive), the MediaItem metadata is embedded
-                // into each child ProgressiveMediaSource via createMediaSource(mediaItem).
-                // ExoPlayer then propagates the first child's item metadata up as
-                // player.mediaMetadata, which is what DefaultMediaNotificationProvider reads.
-                // We do NOT call setMediaItem() + setMediaSource() separately — that sequence
-                // discards the item because setMediaSource() resets the queue.
-                val mediaSource = buildMediaSource(info, metadata)
-                player.setMediaSource(mediaSource)
+                // 1. Put the PlayableStream in the map
+                streamMap[info.videoId] = info.stream
+
+                // 2. Build the MediaItem with videoId as mediaId, watch URL as URI, and metadata
+                val mediaItem = MediaItem.Builder()
+                    .setMediaId(info.videoId)
+                    .setUri(Uri.parse(info.originalUrl))
+                    .setMediaMetadata(metadata)
+                    .build()
+
+                // 3. Set MediaItem, prepare, and play (standard Media3 pattern)
+                player.setMediaItem(mediaItem)
                 player.prepare()
-                player.playWhenReady = true
+                player.play()
 
                 _playbackState.update {
                     it.copy(
@@ -273,10 +343,21 @@ class PlayerManager @Inject constructor(
                         .setArtworkUri(freshInfo.thumbnailUrl?.let { Uri.parse(it) })
                         .build()
                     player.setPlaylistMetadata(metadata)
-                    val mediaSource = buildMediaSource(freshInfo, metadata)
-                    player.setMediaSource(mediaSource, resumePosition)
+
+                    // Update map entry
+                    streamMap[freshInfo.videoId] = freshInfo.stream
+
+                    val mediaItem = MediaItem.Builder()
+                        .setMediaId(freshInfo.videoId)
+                        .setUri(Uri.parse(freshInfo.originalUrl))
+                        .setMediaMetadata(metadata)
+                        .build()
+
+                    player.setMediaItem(mediaItem, resumePosition)
+                    player.seekTo(resumePosition)
                     player.prepare()
-                    player.playWhenReady = true
+                    player.play()
+
                     _playbackState.update {
                         it.copy(
                             playbackInfo = freshInfo,
@@ -305,64 +386,6 @@ class PlayerManager @Inject constructor(
                     error = userFriendlyError,
                     isResolving = false,
                 )
-            }
-        }
-    }
-
-    /**
-     * Builds the media source with metadata baked into the MediaItem(s).
-     *
-     * For adaptive streams (video-only + audio-only), we pass a MediaItem with full metadata
-     * to each ProgressiveMediaSource. MergingMediaSource picks up the first child's item so
-     * that player.currentMediaItem.mediaMetadata is non-empty when playback starts — which is
-     * what DefaultMediaNotificationProvider reads to build the notification title/artist/artwork.
-     *
-     * For progressive streams, the single MediaItem already carries the metadata directly.
-     *
-     * We do NOT call player.setMediaItem() before player.setMediaSource(); that sequence
-     * discards the item because setMediaSource() unconditionally resets the queue.
-     */
-    private fun buildMediaSource(
-        playbackInfo: ResolvedPlaybackInfo,
-        metadata: MediaMetadata,
-    ): MediaSource {
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                    "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                    "Chrome/120.0.0.0 Safari/537.36",
-            )
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(15_000)
-
-        val progressiveFactory = ProgressiveMediaSource.Factory(httpDataSourceFactory)
-
-        return when (val stream = playbackInfo.stream) {
-            is PlayableStream.Adaptive -> {
-                // Both items carry the same metadata. MergingMediaSource will expose
-                // the first child's item as player.currentMediaItem.
-                val videoItem = MediaItem.Builder()
-                    .setMediaId(playbackInfo.videoId)
-                    .setUri(Uri.parse(stream.videoUrl))
-                    .setMediaMetadata(metadata)
-                    .build()
-                val audioItem = MediaItem.Builder()
-                    .setMediaId("${playbackInfo.videoId}_audio")
-                    .setUri(Uri.parse(stream.audioUrl))
-                    .setMediaMetadata(metadata)
-                    .build()
-                val videoSource = progressiveFactory.createMediaSource(videoItem)
-                val audioSource = progressiveFactory.createMediaSource(audioItem)
-                MergingMediaSource(videoSource, audioSource)
-            }
-            is PlayableStream.Progressive -> {
-                val mediaItem = MediaItem.Builder()
-                    .setMediaId(playbackInfo.videoId)
-                    .setUri(Uri.parse(stream.streamUrl))
-                    .setMediaMetadata(metadata)
-                    .build()
-                progressiveFactory.createMediaSource(mediaItem)
             }
         }
     }
