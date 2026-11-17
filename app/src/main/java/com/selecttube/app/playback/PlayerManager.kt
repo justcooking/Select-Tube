@@ -15,6 +15,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
@@ -38,10 +39,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val LOG_TAG = "SelectTubeMedia"
+private const val NET_LOG_TAG = "SelectTubeNet"
+private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 data class PlaybackState(
     val playbackInfo: ResolvedPlaybackInfo? = null,
@@ -105,18 +109,29 @@ class PlayerManager @Inject constructor(
     // In-memory map of videoId -> PlayableStream
     private val streamMap = ConcurrentHashMap<String, PlayableStream>()
 
-    private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-        .setUserAgent(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                "Chrome/120.0.0.0 Safari/537.36",
-        )
+    // Request counter for logging the first three data requests of each video
+    private val netRequestCount = AtomicInteger(0)
+
+    private val baseHttpDataSourceFactory = DefaultHttpDataSource.Factory()
+        .setUserAgent(USER_AGENT)
         .setAllowCrossProtocolRedirects(true)
         .setConnectTimeoutMs(15_000)
         .setReadTimeoutMs(15_000)
+        .setKeepPostFor302Redirects(true)
 
-    private val progressiveFactory = ProgressiveMediaSource.Factory(httpDataSourceFactory)
+    private val youtubeDataSourceFactory = YoutubeChunkedDataSourceFactory(
+        baseHttpDataSourceFactory = baseHttpDataSourceFactory,
+        onRequestLogged = { host, statusCode, ttfbMs ->
+            val count = netRequestCount.incrementAndGet()
+            if (count <= 3) {
+                Log.d(NET_LOG_TAG, "Request #$count: host=$host, status=$statusCode, TTFB=${ttfbMs}ms")
+            }
+        },
+    )
+
+    private val progressiveFactory = ProgressiveMediaSource.Factory(youtubeDataSourceFactory)
     private val defaultMediaSourceFactory = DefaultMediaSourceFactory(context)
+        .setDataSourceFactory(youtubeDataSourceFactory)
 
     private val customFactory = CustomMediaSourceFactory(
         defaultFactory = defaultMediaSourceFactory,
@@ -124,8 +139,18 @@ class PlayerManager @Inject constructor(
         streamMap = streamMap,
     )
 
+    private val loadControl = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(
+            /* minBufferMs = */ 15_000,
+            /* maxBufferMs = */ 50_000,
+            /* bufferForPlaybackMs = */ 1_500,
+            /* bufferForPlaybackAfterRebufferMs = */ 3_000,
+        )
+        .build()
+
     val player: ExoPlayer = ExoPlayer.Builder(context)
         .setMediaSourceFactory(customFactory)
+        .setLoadControl(loadControl)
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
@@ -212,6 +237,7 @@ class PlayerManager @Inject constructor(
         initialChannel: String? = null,
         initialThumbnail: String? = null,
     ) {
+        netRequestCount.set(0)
         // If the same video is already loaded and no error, just ensure playing
         if (lastUrlOrId == urlOrId && currentPlaybackInfo != null && _playbackState.value.error == null) {
             if (!player.isPlaying) {
@@ -343,6 +369,7 @@ class PlayerManager @Inject constructor(
         if (is403 && !hasRetriedExpiration && currentPlaybackInfo != null) {
             hasRetriedExpiration = true
             val resumePosition = player.currentPosition
+            netRequestCount.set(0)
             scope.launch {
                 try {
                     _playbackState.update { it.copy(isResolving = true, error = null) }
