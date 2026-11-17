@@ -13,6 +13,8 @@ import com.selecttube.app.R
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
+private const val LOG_TAG = "SelectTubeMedia"
+
 @AndroidEntryPoint
 class PlaybackService : MediaSessionService() {
 
@@ -21,15 +23,16 @@ class PlaybackService : MediaSessionService() {
 
     private var mediaSession: MediaSession? = null
 
-    // Track whether we have called startForeground at least once this service lifecycle.
+    // Set to true once we have called startForeground() this service lifecycle.
     private var isForegroundStarted = false
 
     private val playerListener = object : Player.Listener {
         override fun onPlaybackStateChanged(playbackState: Int) {
             val player = playerManager.player
-            // When user dismisses the notification while paused, Media3 calls stop() → STATE_IDLE.
+            // When the user dismisses the notification while paused, Media3 stops the player
+            // (STATE_IDLE). We stop the service so it doesn't linger as a background process.
             if (playbackState == Player.STATE_IDLE && !player.playWhenReady) {
-                Log.d(TAG, "Player IDLE and not playing → stopping service")
+                Log.d(LOG_TAG, "PlaybackService: player IDLE and not playing → stopSelf()")
                 stopSelf()
             }
         }
@@ -38,13 +41,15 @@ class PlaybackService : MediaSessionService() {
     override fun onCreate() {
         super.onCreate()
 
-        // Channel is already created in SelectTubeApp.onCreate(); calling it again is a no-op.
-        // We call it here too as a safety net for direct-launch scenarios in tests.
+        // Channel is already registered in SelectTubeApp.onCreate(); this is a safety net.
         ensureNotificationChannel()
 
-        // Tell Media3 which channel to use for the notification.
+        // The notification provider MUST use the same NOTIFICATION_ID and CHANNEL_ID as the
+        // placeholder we post in promoteForeground(). If the IDs differ, Media3 posts a second,
+        // separate notification instead of replacing ours, and the placeholder stays forever.
         val notificationProvider = DefaultMediaNotificationProvider.Builder(this)
-            .setChannelId(CHANNEL_ID)
+            .setNotificationId(NOTIFICATION_ID)   // must match the ID used in startForeground()
+            .setChannelId(CHANNEL_ID)              // must match the channel used in startForeground()
             .setChannelName(R.string.playback_notification_channel_name)
             .build()
         setMediaNotificationProvider(notificationProvider)
@@ -59,7 +64,7 @@ class PlaybackService : MediaSessionService() {
         )
 
         val sharedPlayer = playerManager.player
-        Log.d(TAG, "onCreate: binding MediaSession to player ${sharedPlayer.hashCode()}")
+        Log.d(LOG_TAG, "PlaybackService.onCreate: binding MediaSession to player ${sharedPlayer.hashCode()}")
 
         sharedPlayer.addListener(playerListener)
 
@@ -69,16 +74,19 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Let MediaSessionService handle its own command processing first.
+        // Let MediaSessionService handle its own bookkeeping first.
         super.onStartCommand(intent, flags, startId)
-        Log.d(TAG, "onStartCommand: playWhenReady=${playerManager.player.playWhenReady}, " +
-            "playbackState=${playerManager.player.playbackState}, " +
-            "isForegroundStarted=$isForegroundStarted")
+        Log.d(
+            LOG_TAG,
+            "PlaybackService.onStartCommand: playWhenReady=${playerManager.player.playWhenReady}, " +
+                "playbackState=${playerManager.player.playbackState}, " +
+                "isForegroundStarted=$isForegroundStarted",
+        )
 
-        // On Android 14+ a service started with startForegroundService must call
-        // startForeground within 10 s or be killed with a ForegroundServiceDidNotStartInTimeException.
-        // MediaSessionService normally calls startForeground only when a MediaController connects,
-        // but this app intentionally does not create one. We therefore call it here directly.
+        // On Android 8+ a service started with startForegroundService must call startForeground()
+        // within 5–10 seconds. MediaSessionService normally only calls it when a MediaController
+        // connects, which this app never creates. We call it here directly with a placeholder
+        // notification so the platform constraint is met immediately.
         if (!isForegroundStarted) {
             promoteForeground()
         }
@@ -87,51 +95,29 @@ class PlaybackService : MediaSessionService() {
     }
 
     /**
-     * MediaSessionService calls this whenever the player state or metadata changes.
-     * We intercept it to ensure startForeground is called (or re-called after a stopForeground),
-     * and to inject playlistMetadata into the notification when currentMediaItem.mediaMetadata
-     * is empty (which happens with MergingMediaSource).
+     * MediaSessionService calls this whenever player state or metadata changes.
+     * We always call super so Media3 can build and post the proper notification with
+     * title, artist, artwork, and transport controls.
+     * We never return early here — doing so blocks the update and leaves the placeholder visible.
      */
     override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
-        Log.d(TAG, "onUpdateNotification: startInForegroundRequired=$startInForegroundRequired, " +
-            "mediaMetadata='${session.player.mediaMetadata.title}', " +
-            "playlistMetadata='${session.player.playlistMetadata.title}'")
+        Log.d(
+            LOG_TAG,
+            "PlaybackService.onUpdateNotification: " +
+                "startInForegroundRequired=$startInForegroundRequired, " +
+                "mediaMetadata.title='${session.player.mediaMetadata.title}', " +
+                "currentMediaItem?.mediaId='${session.player.currentMediaItem?.mediaId}'",
+        )
 
-        // When the player uses MergingMediaSource, player.mediaMetadata (which Media3's
-        // DefaultMediaNotificationProvider reads) is EMPTY because there is no top-level
-        // MediaItem wrapping the merged source. player.playlistMetadata IS populated because
-        // PlayerManager explicitly calls player.setPlaylistMetadata(). We propagate it onto
-        // player.mediaMetadata by temporarily overriding it via the MediaSession so the
-        // notification provider can read a meaningful title and artist.
-        //
-        // The correct way to do this in Media3 is to call session.player.replaceCurrentMediaItem()
-        // but that is not valid for MediaSource-based playback. Instead we fall back to
-        // building the notification ourselves when mediaMetadata is blank.
-        val player = session.player
-        val effectiveMetadata = if (player.mediaMetadata.title.isNullOrEmpty()) {
-            player.playlistMetadata
-        } else {
-            player.mediaMetadata
-        }
-
-        if (effectiveMetadata.title.isNullOrEmpty()) {
-            // No metadata at all yet (stream still resolving). Still promote to foreground
-            // with a bare notification so we don't get killed.
-            if (startInForegroundRequired || !isForegroundStarted) {
-                promoteForeground()
-            }
-            return
-        }
-
-        // Let the default provider build the notification with controls; it reads mediaMetadata.
-        // If mediaMetadata was empty we can't fix that without modifying the player state directly,
-        // so we let it build a minimal notification and promote anyway.
+        // Always let the default provider run. It will call startForeground() internally when
+        // startInForegroundRequired is true, using NOTIFICATION_ID and CHANNEL_ID that we
+        // configured above — the same IDs the placeholder uses, so it replaces rather than
+        // adding a second notification.
         super.onUpdateNotification(session, startInForegroundRequired)
 
-        // Guarantee foreground even if the super call didn't promote.
-        if (!isForegroundStarted) {
-            promoteForeground()
-        }
+        // If we promoted with a placeholder but super did not yet set isForegroundStarted
+        // (because we track it ourselves), mark it now so we don't post the placeholder again.
+        isForegroundStarted = true
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
@@ -143,13 +129,13 @@ class PlaybackService : MediaSessionService() {
         if (!player.playWhenReady || player.mediaItemCount == 0 ||
             player.playbackState == Player.STATE_ENDED
         ) {
-            Log.d(TAG, "onTaskRemoved: not playing, stopping service")
+            Log.d(LOG_TAG, "PlaybackService.onTaskRemoved: not playing → stopSelf()")
             stopSelf()
         }
     }
 
     override fun onDestroy() {
-        Log.d(TAG, "onDestroy")
+        Log.d(LOG_TAG, "PlaybackService.onDestroy")
         playerManager.player.removeListener(playerListener)
         mediaSession?.run {
             // Do NOT release the player — it is a @Singleton managed by PlayerManager.
@@ -165,15 +151,16 @@ class PlaybackService : MediaSessionService() {
     // ---------------------------------------------------------------------------
 
     /**
-     * Builds a minimal foreground notification and calls startForeground so the platform
-     * is satisfied. Media3's DefaultMediaNotificationProvider will replace it immediately
-     * with a proper media notification containing controls.
+     * Posts a minimal notification and calls startForeground to satisfy Android's
+     * ForegroundServiceDidNotStartInTimeException window. Media3 replaces this notification
+     * via onUpdateNotification() as soon as the player has metadata, because both use
+     * NOTIFICATION_ID / CHANNEL_ID.
      */
     private fun promoteForeground() {
         val notification = buildLoadingNotification()
         startForeground(NOTIFICATION_ID, notification)
         isForegroundStarted = true
-        Log.d(TAG, "promoteForeground: startForeground called")
+        Log.d(LOG_TAG, "PlaybackService.promoteForeground: startForeground(id=$NOTIFICATION_ID) called")
     }
 
     private fun buildLoadingNotification(): Notification {

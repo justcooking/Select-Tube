@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -32,6 +33,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
+
+private const val LOG_TAG = "SelectTubeMedia"
 
 data class PlaybackState(
     val playbackInfo: ResolvedPlaybackInfo? = null,
@@ -94,6 +97,14 @@ class PlayerManager @Inject constructor(
                         currentPositionMs = player.currentPosition.coerceAtLeast(0L),
                     )
                 }
+                // Log when READY so we can verify metadata is populated at that point.
+                if (playbackState == Player.STATE_READY) {
+                    Log.d(
+                        LOG_TAG,
+                        "STATE_READY — mediaMetadata.title='${player.mediaMetadata.title}' " +
+                            "currentMediaItem?.mediaId='${player.currentMediaItem?.mediaId}'",
+                    )
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -142,7 +153,10 @@ class PlayerManager @Inject constructor(
         val initialMetadata = MediaMetadata.Builder()
             .setTitle(initialTitle ?: currentPlaybackInfo?.title ?: "Loading...")
             .setArtist(initialChannel ?: currentPlaybackInfo?.channelName ?: "")
-            .setArtworkUri(initialThumbnail?.let { Uri.parse(it) } ?: currentPlaybackInfo?.thumbnailUrl?.let { Uri.parse(it) })
+            .setArtworkUri(
+                initialThumbnail?.let { Uri.parse(it) }
+                    ?: currentPlaybackInfo?.thumbnailUrl?.let { Uri.parse(it) },
+            )
             .build()
         player.setPlaylistMetadata(initialMetadata)
 
@@ -176,19 +190,15 @@ class PlayerManager @Inject constructor(
                     .build()
                 player.setPlaylistMetadata(metadata)
 
-                // Plant a real MediaItem with the correct metadata BEFORE setMediaSource.
-                // When using MergingMediaSource (video + audio adaptive streams), there is no
-                // top-level MediaItem, so player.mediaMetadata (which DefaultMediaNotificationProvider
-                // reads to build the notification) would otherwise be EMPTY.
-                // Setting the item first ensures player.currentMediaItem.mediaMetadata is
-                // populated; setMediaSource then overrides what actually plays, but the item
-                // (and its metadata) stays in the queue so the notification has title, artist,
-                // and artwork.
-                val metadataItem = buildMetadataMediaItem(info, metadata)
-                player.setMediaItem(metadataItem)
-
-                val mediaSource = buildMediaSource(info)
-                player.setMediaSource(mediaSource, /* resetPosition= */ true)
+                // Build the media source with metadata baked into every MediaItem.
+                // For MergingMediaSource (adaptive), the MediaItem metadata is embedded
+                // into each child ProgressiveMediaSource via createMediaSource(mediaItem).
+                // ExoPlayer then propagates the first child's item metadata up as
+                // player.mediaMetadata, which is what DefaultMediaNotificationProvider reads.
+                // We do NOT call setMediaItem() + setMediaSource() separately — that sequence
+                // discards the item because setMediaSource() resets the queue.
+                val mediaSource = buildMediaSource(info, metadata)
+                player.setMediaSource(mediaSource)
                 player.prepare()
                 player.playWhenReady = true
 
@@ -263,9 +273,7 @@ class PlayerManager @Inject constructor(
                         .setArtworkUri(freshInfo.thumbnailUrl?.let { Uri.parse(it) })
                         .build()
                     player.setPlaylistMetadata(metadata)
-                    val metadataItem = buildMetadataMediaItem(freshInfo, metadata)
-                    player.setMediaItem(metadataItem)
-                    val mediaSource = buildMediaSource(freshInfo)
+                    val mediaSource = buildMediaSource(freshInfo, metadata)
                     player.setMediaSource(mediaSource, resumePosition)
                     player.prepare()
                     player.playWhenReady = true
@@ -288,7 +296,8 @@ class PlayerManager @Inject constructor(
         } else {
             val userFriendlyError = when {
                 is403 -> "Stream expired. Tap Retry to reload."
-                error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "Network connection lost. Please check your internet connection."
+                error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ->
+                    "Network connection lost. Please check your internet connection."
                 else -> error.localizedMessage ?: "Playback error"
             }
             _playbackState.update {
@@ -300,23 +309,39 @@ class PlayerManager @Inject constructor(
         }
     }
 
-    private fun buildMediaSource(playbackInfo: ResolvedPlaybackInfo): MediaSource {
+    /**
+     * Builds the media source with metadata baked into the MediaItem(s).
+     *
+     * For adaptive streams (video-only + audio-only), we pass a MediaItem with full metadata
+     * to each ProgressiveMediaSource. MergingMediaSource picks up the first child's item so
+     * that player.currentMediaItem.mediaMetadata is non-empty when playback starts — which is
+     * what DefaultMediaNotificationProvider reads to build the notification title/artist/artwork.
+     *
+     * For progressive streams, the single MediaItem already carries the metadata directly.
+     *
+     * We do NOT call player.setMediaItem() before player.setMediaSource(); that sequence
+     * discards the item because setMediaSource() unconditionally resets the queue.
+     */
+    private fun buildMediaSource(
+        playbackInfo: ResolvedPlaybackInfo,
+        metadata: MediaMetadata,
+    ): MediaSource {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .setUserAgent(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                    "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                    "Chrome/120.0.0.0 Safari/537.36",
+            )
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15000)
-            .setReadTimeoutMs(15000)
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(15_000)
 
         val progressiveFactory = ProgressiveMediaSource.Factory(httpDataSourceFactory)
 
-        val metadata = MediaMetadata.Builder()
-            .setTitle(playbackInfo.title)
-            .setArtist(playbackInfo.channelName)
-            .setArtworkUri(playbackInfo.thumbnailUrl?.let { Uri.parse(it) })
-            .build()
-
         return when (val stream = playbackInfo.stream) {
             is PlayableStream.Adaptive -> {
+                // Both items carry the same metadata. MergingMediaSource will expose
+                // the first child's item as player.currentMediaItem.
                 val videoItem = MediaItem.Builder()
                     .setMediaId(playbackInfo.videoId)
                     .setUri(Uri.parse(stream.videoUrl))
@@ -342,37 +367,12 @@ class PlayerManager @Inject constructor(
         }
     }
 
-    /**
-     * Builds a stub MediaItem that carries full metadata but no playable URI.
-     * This is set via player.setMediaItem() before player.setMediaSource() so that
-     * player.currentMediaItem.mediaMetadata is non-empty when MergingMediaSource is used.
-     * MergingMediaSource replaces what plays, but the item (and its metadata) stays in
-     * the queue — DefaultMediaNotificationProvider reads it via player.mediaMetadata.
-     */
-    private fun buildMetadataMediaItem(
-        playbackInfo: ResolvedPlaybackInfo,
-        metadata: MediaMetadata,
-    ): MediaItem {
-        // Use the video URL as a placeholder URI. The actual source is overridden by
-        // setMediaSource(mergingSource) immediately after, so this URI is never fetched.
-        val placeholderUri = when (val s = playbackInfo.stream) {
-            is PlayableStream.Adaptive -> Uri.parse(s.videoUrl)
-            is PlayableStream.Progressive -> Uri.parse(s.streamUrl)
-        }
-        return MediaItem.Builder()
-            .setMediaId(playbackInfo.videoId)
-            .setUri(placeholderUri)
-            .setMediaMetadata(metadata)
-            .build()
-    }
-
     private fun startPlaybackService() {
         try {
             val intent = Intent(context, PlaybackService::class.java)
             // startForegroundService is required so the service can call startForeground()
-            // within Android's 10-second window (5 s on older APIs). Using plain startService()
-            // means the service stays in the background and is never promoted to foreground,
-            // so the media notification is never posted on Android 12+.
+            // within Android's 10-second window. Using plain startService() leaves the
+            // service in the background, so the media notification is never posted.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -380,10 +380,10 @@ class PlayerManager @Inject constructor(
             }
         } catch (e: IllegalStateException) {
             // Android 12+ restricts FGS start from the background.
-            // This call is always made from a foreground user tap, so this should not happen,
-            // but catch defensively.
+            // This call is always triggered by a foreground user tap, so this should not
+            // happen, but catch defensively.
         } catch (e: Exception) {
-            // Catch other unexpected platform security/runtime exceptions
+            // Catch other unexpected platform security/runtime exceptions.
         }
     }
 }
