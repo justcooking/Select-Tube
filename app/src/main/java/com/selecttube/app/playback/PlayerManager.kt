@@ -344,6 +344,15 @@ class PlayerManager @Inject constructor(
         }
     }
 
+    fun stop() {
+        resolveJob?.cancel()
+        player.stop()
+        player.clearMediaItems()
+        currentPlaybackInfo = null
+        lastUrlOrId = null
+        _playbackState.update { PlaybackState() }
+    }
+
     fun seekTo(positionMs: Long) {
         player.seekTo(positionMs.coerceAtLeast(0L))
         _playbackState.update { it.copy(currentPositionMs = positionMs) }

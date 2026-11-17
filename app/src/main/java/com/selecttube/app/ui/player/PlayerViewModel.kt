@@ -41,4 +41,8 @@ class PlayerViewModel @Inject constructor(
     fun retry() {
         playerManager.retry()
     }
+
+    fun stop() {
+        playerManager.stop()
+    }
 }
