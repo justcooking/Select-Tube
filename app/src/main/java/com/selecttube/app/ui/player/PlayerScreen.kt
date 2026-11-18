@@ -101,6 +101,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -1590,8 +1591,56 @@ fun PlayerScreen(
                                             }
                                         },
                                         valueRange = 0f..duration,
+                                        thumb = {
+                                            Spacer(modifier = Modifier.size(10.dp))
+                                        },
+                                        track = { sliderState ->
+                                            Canvas(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(10.dp),
+                                            ) {
+                                                val trackHeight = size.height
+                                                val trackCornerRadius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
+                                                val range = sliderState.valueRange.endInclusive - sliderState.valueRange.start
+                                                val fraction = if (range > 0f) {
+                                                    ((sliderState.value - sliderState.valueRange.start) / range).coerceIn(0f, 1f)
+                                                } else 0f
+
+                                                // Inactive background track
+                                                drawRoundRect(
+                                                    color = Color.White.copy(alpha = 0.35f),
+                                                    size = size,
+                                                    cornerRadius = trackCornerRadius,
+                                                )
+
+                                                // Geometry for centered dot and concentric blue head
+                                                val dotRadius = 3.dp.toPx()
+                                                val minX = trackHeight / 2f
+                                                val maxX = (size.width - (trackHeight / 2f)).coerceAtLeast(minX)
+                                                val dotX = minX + (maxX - minX) * fraction
+                                                val centerY = size.height / 2f
+
+                                                // Active played track
+                                                val activeWidth = (dotX + trackHeight / 2f).coerceIn(0f, size.width)
+                                                if (activeWidth > 0f) {
+                                                    drawRoundRect(
+                                                        color = Color(0xFF2979FF),
+                                                        size = Size(activeWidth, trackHeight),
+                                                        cornerRadius = trackCornerRadius,
+                                                    )
+                                                }
+
+                                                // White circular dot centered vertically and inside the blue bar
+                                                drawCircle(
+                                                    color = Color.White,
+                                                    radius = dotRadius,
+                                                    center = Offset(dotX, centerY),
+                                                )
+                                            }
+                                        },
                                         colors = SliderDefaults.colors(
-                                            thumbColor = Color(0xFF2979FF),
+                                            thumbColor = Color.Transparent,
                                             activeTrackColor = Color(0xFF2979FF),
                                             inactiveTrackColor = Color.White.copy(alpha = 0.35f),
                                         ),
