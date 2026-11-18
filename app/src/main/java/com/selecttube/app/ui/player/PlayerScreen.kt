@@ -219,7 +219,55 @@ fun PlayerScreen(
             return@DisposableEffect onDispose {}
         }
 
-        onDispose {}
+        val listener = object : OrientationEventListener(act) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+
+                val autoRotateOn = try {
+                    android.provider.Settings.System.getInt(
+                        act.contentResolver,
+                        android.provider.Settings.System.ACCELEROMETER_ROTATION,
+                        0,
+                    ) == 1
+                } catch (_: Exception) {
+                    true
+                }
+                if (!autoRotateOn) return
+
+                val isDeviceLandscape = (orientation in 60..120) || (orientation in 240..300)
+                val isDevicePortrait = (orientation in 0..45) || (orientation in 315..359)
+
+                if (isDevicePortrait) {
+                    if (isManuallyLockedToPortrait) {
+                        isManuallyLockedToPortrait = false
+                        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
+                    if (enteredViaAutoRotate || hasSeenLandscapeOrientation) {
+                        isFullscreen = false
+                        enteredViaAutoRotate = false
+                        hasSeenLandscapeOrientation = false
+                        act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    }
+                } else if (isDeviceLandscape) {
+                    if (!isManuallyLockedToPortrait) {
+                        hasSeenLandscapeOrientation = true
+                        if (!currentInFullscreenMode) {
+                            enteredViaAutoRotate = true
+                            isFullscreen = true
+                            act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        }
+                    }
+                }
+            }
+        }
+
+        if (listener.canDetectOrientation()) {
+            listener.enable()
+        }
+
+        onDispose {
+            listener.disable()
+        }
     }
 
     DisposableEffect(Unit) {
