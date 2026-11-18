@@ -672,7 +672,8 @@ fun PlayerScreen(
                     ) {
                         // Title Row (tapping expands/collapses description)
                         val description = state.playbackInfo?.description
-                            val hasDescription = !description.isNullOrBlank()
+                        val chapters = state.playbackInfo?.chapters ?: emptyList()
+                        val hasDescription = !description.isNullOrBlank() || chapters.isNotEmpty()
 
                         Row(
                             modifier = Modifier
@@ -877,6 +878,69 @@ fun PlayerScreen(
                                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
                                         modifier = Modifier.padding(bottom = 14.dp),
                                     )
+
+                                    // 1. Timestamps / Chapters Section (shown at the top of description when available)
+                                    if (chapters.isNotEmpty()) {
+                                        Text(
+                                            text = "Timestamps (${chapters.size})",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color.White.copy(alpha = 0.06f))
+                                                .padding(vertical = 4.dp),
+                                        ) {
+                                            chapters.forEach { chapter ->
+                                                val timestampStr = formatTime(chapter.startSeconds * 1000L)
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clickable {
+                                                            viewModel.seekTo(chapter.startSeconds * 1000L)
+                                                            lastUserInteractionTime = System.currentTimeMillis()
+                                                        }
+                                                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    Surface(
+                                                        shape = RoundedCornerShape(4.dp),
+                                                        color = Color(0xFF2979FF).copy(alpha = 0.2f),
+                                                    ) {
+                                                        Text(
+                                                            text = timestampStr,
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            color = Color(0xFF2979FF),
+                                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                                        )
+                                                    }
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    Text(
+                                                        text = chapter.title,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = Color.White,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                    )
+                                                }
+                                            }
+                                        }
+
+                                        if (!description.isNullOrBlank()) {
+                                            Spacer(modifier = Modifier.height(14.dp))
+                                            HorizontalDivider(
+                                                thickness = 0.5.dp,
+                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
+                                                modifier = Modifier.padding(bottom = 12.dp),
+                                            )
+                                        }
+                                    }
 
                                     // 2. Full Description Body
                                     if (!description.isNullOrBlank()) {
@@ -1685,6 +1749,77 @@ private fun timestampToSeconds(ts: String): Long? {
     }
 }
 
+private fun linkifyRawTimestamps(html: String): String {
+    val pattern = Regex("""(?<![0-9:a-zA-Z/="\'_])(\b(?:\d{1,2}:)?[0-5]?\d:[0-5]\d\b)(?![0-9:a-zA-Z/="\'_])""")
+    val tagSplit = Regex("""(<a\b[^>]*>.*?</a>)""", RegexOption.IGNORE_CASE)
+    val tokens = tagSplit.split(html)
+    val matches = tagSplit.findAll(html).map { it.value }.toList()
+
+    val result = StringBuilder()
+    for (i in tokens.indices) {
+        val token = tokens[i]
+        val replaced = pattern.replace(token) { m ->
+            val ts = m.groupValues[1]
+            val sec = timestampToSeconds(ts)
+            if (sec != null) {
+                "<a href=\"selecttube://seek?seconds=$sec\">$ts</a>"
+            } else {
+                ts
+            }
+        }
+        result.append(replaced)
+        if (i < matches.size) {
+            result.append(matches[i])
+        }
+    }
+    return result.toString()
+}
+
+private fun parseTimeParamToMs(timeParam: String): Long? {
+    val clean = timeParam.trim().lowercase(Locale.ROOT)
+    if (clean.all { it.isDigit() }) {
+        return clean.toLongOrNull()?.times(1000L)
+    }
+    if (clean.endsWith("s") && clean.dropLast(1).all { it.isDigit() }) {
+        return clean.dropLast(1).toLongOrNull()?.times(1000L)
+    }
+
+    val parts = Regex("""(\d+)([hms])""").findAll(clean).toList()
+    if (parts.isNotEmpty()) {
+        var totalSeconds = 0L
+        for (part in parts) {
+            val count = part.groupValues[1].toLongOrNull() ?: 0L
+            when (part.groupValues[2]) {
+                "h" -> totalSeconds += count * 3600L
+                "m" -> totalSeconds += count * 60L
+                "s" -> totalSeconds += count
+            }
+        }
+        return totalSeconds * 1000L
+    }
+    return null
+}
+
+private fun parseTimestampToMs(url: String): Long? {
+    // 1. Inbuilt selecttube://seek link
+    val stMatch = Regex("""selecttube://seek\?(?:ms=(\d+)|seconds=(\d+))""").find(url)
+    if (stMatch != null) {
+        val msStr = stMatch.groupValues[1]
+        val secStr = stMatch.groupValues[2]
+        if (msStr.isNotEmpty()) return msStr.toLongOrNull()
+        if (secStr.isNotEmpty()) return (secStr.toLongOrNull() ?: 0L) * 1000L
+    }
+
+    // 2. YouTube timestamp URL parameters (?t=..., &t=..., #t=..., ?time_continue=..., &time_continue=...)
+    val ytTimeMatch = Regex("""(?:[?&#]t=|time_continue=)([0-9hmsHMS]+)""").find(url)
+    if (ytTimeMatch != null) {
+        val timeParam = ytTimeMatch.groupValues[1]
+        return parseTimeParamToMs(timeParam)
+    }
+
+    return null
+}
+
 private fun formatDescriptionToAnnotatedString(
     content: String,
     type: DescriptionType,
@@ -1697,7 +1832,7 @@ private fun formatDescriptionToAnnotatedString(
         DescriptionType.PLAIN_TEXT -> plainTextToHtml(content)
     }
 
-    val finalHtml = baseHtml
+    val finalHtml = linkifyRawTimestamps(baseHtml)
 
     return try {
         AnnotatedString.fromHtml(
