@@ -5,22 +5,38 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlaybackException
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.text.TextOutput
+import androidx.media3.exoplayer.text.TextRenderer
+import androidx.media3.extractor.Extractor
+import androidx.media3.extractor.ExtractorInput
+import androidx.media3.extractor.ExtractorOutput
+import androidx.media3.extractor.ExtractorsFactory
+import androidx.media3.extractor.PositionHolder
+import androidx.media3.extractor.text.DefaultSubtitleParserFactory
+import androidx.media3.extractor.text.SubtitleExtractor
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
@@ -28,6 +44,7 @@ import com.selecttube.app.data.youtube.PlayableStream
 import com.selecttube.app.data.youtube.ResolvedPlaybackInfo
 import com.selecttube.app.data.youtube.StreamResolver
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,6 +55,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.ArrayList
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
@@ -56,6 +74,8 @@ data class PlaybackState(
     val durationMs: Long = 0L,
     val error: String? = null,
     val videoQuality: String? = null,
+    val audioTrack: String? = null,
+    val selectedSubtitle: String? = null,
     val isBackgroundOnly: Boolean = false,
 )
 
@@ -66,35 +86,91 @@ data class PlaybackState(
  * - [MergingMediaSource] combining video and audio for [PlayableStream.Adaptive]
  * - [ProgressiveMediaSource] for [PlayableStream.Progressive]
  * Each child source is created from that same [MediaItem].
+ * Any attached [MediaItem.subtitleConfigurations] are parsed and merged via [SubtitleExtractor].
  * Any other MediaItem is delegated to [DefaultMediaSourceFactory].
  */
 private class CustomMediaSourceFactory(
     private val defaultFactory: DefaultMediaSourceFactory,
     private val progressiveFactory: ProgressiveMediaSource.Factory,
+    private val httpDataSourceFactory: DefaultHttpDataSource.Factory,
     private val streamMap: Map<String, PlayableStream>,
 ) : MediaSource.Factory by defaultFactory {
+
+    private val subtitleParserFactory = DefaultSubtitleParserFactory()
+
+    private fun createSubtitleMediaSource(config: MediaItem.SubtitleConfiguration): MediaSource {
+        val format = Format.Builder()
+            .setSampleMimeType(config.mimeType)
+            .setLanguage(config.language)
+            .setSelectionFlags(config.selectionFlags)
+            .setRoleFlags(config.roleFlags)
+            .setLabel(config.label)
+            .setId(config.id)
+            .build()
+
+        val extractorsFactory = ExtractorsFactory {
+            arrayOf(
+                if (subtitleParserFactory.supportsFormat(format)) {
+                    SubtitleExtractor(subtitleParserFactory.create(format), format)
+                } else {
+                    object : Extractor {
+                        override fun init(output: ExtractorOutput) {}
+                        override fun sniff(input: ExtractorInput): Boolean = false
+                        override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int = Extractor.RESULT_END_OF_INPUT
+                        override fun seek(position: Long, timeUs: Long) {}
+                        override fun release() {}
+                    }
+                }
+            )
+        }
+
+        return ProgressiveMediaSource.Factory(httpDataSourceFactory, extractorsFactory)
+            .createMediaSource(MediaItem.fromUri(config.uri))
+    }
 
     override fun createMediaSource(mediaItem: MediaItem): MediaSource {
         val stream = streamMap[mediaItem.mediaId]
             ?: return defaultFactory.createMediaSource(mediaItem)
 
+        val subtitleConfigs = mediaItem.localConfiguration?.subtitleConfigurations.orEmpty()
+        val subtitleSources = subtitleConfigs.map { createSubtitleMediaSource(it) }
+
         return when (stream) {
             is PlayableStream.Adaptive -> {
                 val videoItem = mediaItem.buildUpon()
                     .setUri(Uri.parse(stream.videoUrl))
+                    .setSubtitleConfigurations(emptyList())
                     .build()
                 val audioItem = mediaItem.buildUpon()
                     .setUri(Uri.parse(stream.audioUrl))
+                    .setSubtitleConfigurations(emptyList())
                     .build()
                 val videoSource = progressiveFactory.createMediaSource(videoItem)
                 val audioSource = progressiveFactory.createMediaSource(audioItem)
-                MergingMediaSource(videoSource, audioSource)
+                if (subtitleSources.isEmpty()) {
+                    MergingMediaSource(videoSource, audioSource)
+                } else {
+                    MergingMediaSource(
+                        videoSource,
+                        audioSource,
+                        *subtitleSources.toTypedArray(),
+                    )
+                }
             }
             is PlayableStream.Progressive -> {
                 val progressiveItem = mediaItem.buildUpon()
                     .setUri(Uri.parse(stream.streamUrl))
+                    .setSubtitleConfigurations(emptyList())
                     .build()
-                progressiveFactory.createMediaSource(progressiveItem)
+                val progressiveSource = progressiveFactory.createMediaSource(progressiveItem)
+                if (subtitleSources.isEmpty()) {
+                    progressiveSource
+                } else {
+                    MergingMediaSource(
+                        progressiveSource,
+                        *subtitleSources.toTypedArray(),
+                    )
+                }
             }
         }
     }
@@ -137,6 +213,7 @@ class PlayerManager @Inject constructor(
     private val customFactory = CustomMediaSourceFactory(
         defaultFactory = defaultMediaSourceFactory,
         progressiveFactory = progressiveFactory,
+        httpDataSourceFactory = baseHttpDataSourceFactory,
         streamMap = streamMap,
     )
 
@@ -149,7 +226,23 @@ class PlayerManager @Inject constructor(
         )
         .build()
 
-    val player: ExoPlayer = ExoPlayer.Builder(context)
+    val player: ExoPlayer = ExoPlayer.Builder(
+        context,
+        object : DefaultRenderersFactory(context) {
+            override fun buildTextRenderers(
+                context: Context,
+                output: TextOutput,
+                outputLooper: Looper,
+                extensionRendererMode: Int,
+                out: ArrayList<Renderer>,
+            ) {
+                val renderer = TextRenderer(output, outputLooper)
+                @Suppress("DEPRECATION")
+                renderer.experimentalSetLegacyDecodingEnabled(true)
+                out.add(renderer)
+            }
+        },
+    )
         .setMediaSourceFactory(customFactory)
         .setLoadControl(loadControl)
         .setAudioAttributes(
@@ -180,6 +273,10 @@ class PlayerManager @Inject constructor(
 
     init {
         ensureMediaControllerConnected()
+        player.trackSelectionParameters = player.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            .build()
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _playbackState.update {
@@ -272,15 +369,27 @@ class PlayerManager @Inject constructor(
             .build()
         player.setPlaylistMetadata(initialMetadata)
 
+        val placeholderInfo = currentPlaybackInfo?.copy(
+            videoId = urlOrId,
+            title = initialTitle ?: currentPlaybackInfo?.title.orEmpty(),
+            channelName = initialChannel ?: currentPlaybackInfo?.channelName.orEmpty(),
+            thumbnailUrl = initialThumbnail ?: currentPlaybackInfo?.thumbnailUrl,
+        ) ?: ResolvedPlaybackInfo(
+            videoId = urlOrId,
+            title = initialTitle.orEmpty().ifBlank { "Loading..." },
+            channelName = initialChannel.orEmpty(),
+            channelId = "",
+            thumbnailUrl = initialThumbnail,
+            durationSeconds = 0L,
+            stream = PlayableStream.Progressive("", ""),
+            originalUrl = urlOrId,
+        )
+
         _playbackState.update {
             PlaybackState(
                 isResolving = true,
                 error = null,
-                playbackInfo = currentPlaybackInfo?.copy(
-                    title = initialTitle ?: currentPlaybackInfo?.title.orEmpty(),
-                    channelName = initialChannel ?: currentPlaybackInfo?.channelName.orEmpty(),
-                    thumbnailUrl = initialThumbnail ?: currentPlaybackInfo?.thumbnailUrl,
-                ),
+                playbackInfo = placeholderInfo,
             )
         }
 
@@ -312,10 +421,22 @@ class PlayerManager @Inject constructor(
                     .setMediaMetadata(metadata)
                     .build()
 
+                // Reset subtitles to off on new video
+                player.trackSelectionParameters = player.trackSelectionParameters
+                    .buildUpon()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                    .build()
+
                 // 3. Set MediaItem, prepare, and play (standard Media3 pattern)
                 player.setMediaItem(mediaItem)
                 player.prepare()
                 player.play()
+
+                val audioTrackLabel = when (info.stream) {
+                    is PlayableStream.Adaptive -> info.stream.audioTrack ?: info.audioTrack
+                    is PlayableStream.Progressive -> info.audioTrack
+                }
 
                 _playbackState.update {
                     it.copy(
@@ -323,9 +444,14 @@ class PlayerManager @Inject constructor(
                         isResolving = false,
                         error = null,
                         videoQuality = quality,
+                        audioTrack = audioTrackLabel,
+                        selectedSubtitle = null,
                         durationMs = (info.durationSeconds * 1000L).coerceAtLeast(0L),
                     )
                 }
+            } catch (e: CancellationException) {
+                // Do not surface coroutine cancellation as an error
+                throw e
             } catch (e: Exception) {
                 _playbackState.update {
                     it.copy(
@@ -393,9 +519,76 @@ class PlayerManager @Inject constructor(
 
     fun setQuality(quality: String) {
         val currentInfo = currentPlaybackInfo ?: return
-        val newStream = streamResolver.resolveQuality(currentInfo.originalUrl, quality) ?: return
+        val currentAudio = _playbackState.value.audioTrack
+        val newStream = streamResolver.resolveQuality(currentInfo.originalUrl, quality, currentAudio) ?: return
 
-        val newInfo = currentInfo.copy(stream = newStream)
+        val qualityLabel = when (newStream) {
+            is PlayableStream.Adaptive -> newStream.videoQuality
+            is PlayableStream.Progressive -> newStream.quality
+        }
+        val audioLabel = when (newStream) {
+            is PlayableStream.Adaptive -> newStream.audioTrack ?: currentAudio
+            is PlayableStream.Progressive -> currentAudio
+        }
+
+        val newInfo = currentInfo.copy(stream = newStream, audioTrack = audioLabel)
+        currentPlaybackInfo = newInfo
+        streamMap[newInfo.videoId] = newStream
+
+        val currentPos = player.currentPosition
+        val wasPlaying = player.isPlaying
+
+        val metadata = MediaMetadata.Builder()
+            .setTitle(newInfo.title)
+            .setArtist(newInfo.channelName)
+            .setArtworkUri(newInfo.thumbnailUrl?.let { Uri.parse(it) })
+            .build()
+        player.setPlaylistMetadata(metadata)
+
+        val selectedSub = _playbackState.value.selectedSubtitle?.let { name ->
+            newInfo.availableSubtitles.firstOrNull { it.displayName == name }
+        }
+        val subtitleConfigs = if (selectedSub != null) {
+            listOf(
+                MediaItem.SubtitleConfiguration.Builder(Uri.parse(selectedSub.url))
+                    .setMimeType(MimeTypes.TEXT_VTT)
+                    .setLanguage(selectedSub.languageCode)
+                    .setLabel(selectedSub.displayName)
+                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                    .build()
+            )
+        } else {
+            emptyList()
+        }
+
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(newInfo.videoId)
+            .setUri(Uri.parse(newInfo.originalUrl))
+            .setMediaMetadata(metadata)
+            .setSubtitleConfigurations(subtitleConfigs)
+            .build()
+
+        player.setMediaItem(mediaItem, currentPos)
+        player.prepare()
+        if (wasPlaying) {
+            player.play()
+        }
+
+        _playbackState.update {
+            it.copy(
+                playbackInfo = newInfo,
+                videoQuality = qualityLabel,
+                audioTrack = audioLabel,
+            )
+        }
+    }
+
+    fun setAudioTrack(trackName: String) {
+        val currentInfo = currentPlaybackInfo ?: return
+        val currentQuality = _playbackState.value.videoQuality
+        val newStream = streamResolver.resolveAudioTrack(currentInfo.originalUrl, trackName, currentQuality) ?: return
+
+        val newInfo = currentInfo.copy(stream = newStream, audioTrack = trackName)
         currentPlaybackInfo = newInfo
         streamMap[newInfo.videoId] = newStream
 
@@ -414,10 +607,27 @@ class PlayerManager @Inject constructor(
             .build()
         player.setPlaylistMetadata(metadata)
 
+        val selectedSub = _playbackState.value.selectedSubtitle?.let { name ->
+            newInfo.availableSubtitles.firstOrNull { it.displayName == name }
+        }
+        val subtitleConfigs = if (selectedSub != null) {
+            listOf(
+                MediaItem.SubtitleConfiguration.Builder(Uri.parse(selectedSub.url))
+                    .setMimeType(MimeTypes.TEXT_VTT)
+                    .setLanguage(selectedSub.languageCode)
+                    .setLabel(selectedSub.displayName)
+                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                    .build()
+            )
+        } else {
+            emptyList()
+        }
+
         val mediaItem = MediaItem.Builder()
             .setMediaId(newInfo.videoId)
             .setUri(Uri.parse(newInfo.originalUrl))
             .setMediaMetadata(metadata)
+            .setSubtitleConfigurations(subtitleConfigs)
             .build()
 
         player.setMediaItem(mediaItem, currentPos)
@@ -430,12 +640,97 @@ class PlayerManager @Inject constructor(
             it.copy(
                 playbackInfo = newInfo,
                 videoQuality = qualityLabel,
+                audioTrack = trackName,
             )
         }
     }
 
+    fun setSubtitle(subtitleName: String?) {
+        val currentInfo = currentPlaybackInfo ?: return
+        val currentPos = player.currentPosition
+        val wasPlaying = player.isPlaying
+        val metadata = player.mediaMetadata
+
+        if (subtitleName == null) {
+            val mediaItem = MediaItem.Builder()
+                .setMediaId(currentInfo.videoId)
+                .setUri(Uri.parse(currentInfo.originalUrl))
+                .setMediaMetadata(metadata)
+                .setSubtitleConfigurations(emptyList())
+                .build()
+
+            player.trackSelectionParameters = player.trackSelectionParameters
+                .buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                .build()
+
+            player.setMediaItem(mediaItem, currentPos)
+            player.prepare()
+            if (wasPlaying) {
+                player.play()
+            }
+
+            _playbackState.update { it.copy(selectedSubtitle = null, error = null) }
+            return
+        }
+
+        val targetSub = currentInfo.availableSubtitles.firstOrNull { it.displayName == subtitleName } ?: return
+
+        val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(targetSub.url))
+            .setMimeType(MimeTypes.TEXT_VTT)
+            .setLanguage(targetSub.languageCode)
+            .setLabel(targetSub.displayName)
+            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+            .build()
+
+        val mediaItem = MediaItem.Builder()
+            .setMediaId(currentInfo.videoId)
+            .setUri(Uri.parse(currentInfo.originalUrl))
+            .setMediaMetadata(metadata)
+            .setSubtitleConfigurations(listOf(subtitleConfig))
+            .build()
+
+        player.trackSelectionParameters = player.trackSelectionParameters
+            .buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .apply {
+                if (targetSub.languageCode.isNotBlank()) {
+                    setPreferredTextLanguage(targetSub.languageCode)
+                }
+            }
+            .build()
+
+        player.setMediaItem(mediaItem, currentPos)
+        player.prepare()
+        if (wasPlaying) {
+            player.play()
+        }
+
+        _playbackState.update { it.copy(selectedSubtitle = subtitleName, error = null) }
+    }
+
     private fun handlePlayerError(error: PlaybackException) {
+        Log.e(LOG_TAG, "ExoPlayer error: ${error.message}, errorCode=${error.errorCode}", error)
         val cause = error.cause
+
+        val isSubtitleError = (error is ExoPlaybackException && (
+            error.type == ExoPlaybackException.TYPE_RENDERER &&
+            error.rendererFormat?.sampleMimeType?.contains("vtt", ignoreCase = true) == true
+        )) || (
+            _playbackState.value.selectedSubtitle != null && (
+                error.message?.contains("subtitle", ignoreCase = true) == true ||
+                error.message?.contains("Legacy decoding", ignoreCase = true) == true
+            )
+        )
+
+        if (isSubtitleError && _playbackState.value.selectedSubtitle != null) {
+            Log.w(LOG_TAG, "Subtitle track failed to decode; turning off subtitle so video continues smoothly.")
+            setSubtitle(null)
+            return
+        }
+
         val is403 = (cause as? HttpDataSource.InvalidResponseCodeException)?.responseCode == 403 ||
             error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
             error.message?.contains("403") == true ||
