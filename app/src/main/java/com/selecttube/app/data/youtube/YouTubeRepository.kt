@@ -2,8 +2,10 @@ package com.selecttube.app.data.youtube
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfoItem
+import org.schabi.newpipe.extractor.channel.tabs.ChannelTabExtractor
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabs
 import org.schabi.newpipe.extractor.exceptions.ExtractionException
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
@@ -20,6 +22,14 @@ data class ResolvedChannel(
     val description: String? = null,
     val subscriberCount: Long = -1,
     val url: String,
+    val bannerUrl: String? = null,
+)
+
+data class ChannelTabResult(
+    val items: List<VideoFeedItem>,
+    val hasNextPage: Boolean,
+    val nextPage: Page?,
+    val tabExtractor: ChannelTabExtractor?,
 )
 
 class ChannelNotFoundException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -65,6 +75,13 @@ class YouTubeRepository @Inject constructor() {
                 null
             }
 
+            // Extract banner URL from extractor if present
+            val bannerUrl = try {
+                extractor.banners?.lastOrNull()?.url ?: extractor.banners?.firstOrNull()?.url
+            } catch (e: Throwable) {
+                null
+            }
+
             ResolvedChannel(
                 channelId = id,
                 name = name,
@@ -72,6 +89,7 @@ class YouTubeRepository @Inject constructor() {
                 description = try { extractor.description } catch (e: Throwable) { null },
                 subscriberCount = try { extractor.subscriberCount } catch (e: Throwable) { -1L },
                 url = try { extractor.url.ifBlank { url } } catch (e: Throwable) { url },
+                bannerUrl = bannerUrl,
             )
         } catch (e: Exception) {
             // If direct channel URL failed and input was not an explicit URL or UC-ID, try searching
@@ -211,59 +229,130 @@ class YouTubeRepository @Inject constructor() {
                 !isShort && !isLive
             }
             .take(maxVideos)
-            .map { item ->
-                val videoUrl = item.url.orEmpty()
-                val videoId = try {
-                    val idMethod = item.javaClass.methods.firstOrNull { it.name == "getId" && it.parameterCount == 0 }
-                    (idMethod?.invoke(item) as? String)?.takeIf { it.isNotBlank() }
-                } catch (e: Throwable) {
-                    null
-                } ?: videoUrl.substringAfterLast("v=").substringBefore("&").ifBlank { videoUrl }
+            .map { item -> extractVideoFeedItem(item, canonicalId) }
+    }
 
-                val thumbnailUrl = try {
-                    item.thumbnails?.lastOrNull()?.url ?: item.thumbnails?.firstOrNull()?.url
-                } catch (e: Throwable) {
-                    null
-                }
-
-                val uploadDateText = try {
-                    item.textualUploadDate
-                } catch (e: Throwable) {
-                    null
-                }
-
-                val uploadTimestamp = extractUploadTimestamp(item, uploadDateText)
-
-                val durationSeconds = try {
-                    item.duration
-                } catch (e: Throwable) {
-                    -1L
-                }
-
-                val title = try {
-                    item.name.orEmpty()
-                } catch (e: Throwable) {
-                    ""
-                }
-
-                val uploader = try {
-                    item.uploaderName.orEmpty()
-                } catch (e: Throwable) {
-                    ""
-                }
-
-                VideoFeedItem(
-                    videoId = videoId,
-                    title = title,
-                    channelName = uploader,
-                    channelId = canonicalId,
-                    thumbnailUrl = thumbnailUrl,
-                    uploadDateText = uploadDateText,
-                    uploadTimestamp = uploadTimestamp,
-                    durationSeconds = durationSeconds,
-                    url = videoUrl,
-                )
+    /**
+     * Fetches the first page of a specific channel tab (Videos, Shorts, Live, etc.)
+     * and returns the items alongside the tab extractor for continuous pagination.
+     */
+    suspend fun fetchChannelTab(
+        channelId: String,
+        tabKey: String,
+    ): ChannelTabResult = withContext(Dispatchers.IO) {
+        val canonicalId = if (channelId.startsWith("UC") && channelId.length in 22..26) {
+            channelId
+        } else {
+            try {
+                val url = normalizeToYouTubeChannelUrl(channelId)
+                val extractor = youtubeService.getChannelExtractor(url)
+                extractor.fetchPage()
+                extractor.id.ifBlank { channelId }
+            } catch (e: Exception) {
+                channelId
             }
+        }
+
+        try {
+            val tabExtractor = youtubeService.getChannelTabExtractorFromId(canonicalId, tabKey).apply {
+                fetchPage()
+            }
+            val page = tabExtractor.initialPage
+            val items = page?.items?.filterIsInstance<StreamInfoItem>()?.map {
+                extractVideoFeedItem(it, canonicalId)
+            } ?: emptyList()
+            val hasNext = page?.hasNextPage() == true
+            val nextPage = if (hasNext) page?.nextPage else null
+
+            ChannelTabResult(
+                items = items,
+                hasNextPage = hasNext,
+                nextPage = nextPage,
+                tabExtractor = tabExtractor,
+            )
+        } catch (e: Exception) {
+            ChannelTabResult(
+                items = emptyList(),
+                hasNextPage = false,
+                nextPage = null,
+                tabExtractor = null,
+            )
+        }
+    }
+
+    /**
+     * Fetches the next page of videos for continuous infinite scrolling.
+     */
+    suspend fun fetchChannelTabPage(
+        tabExtractor: ChannelTabExtractor,
+        page: Page,
+        canonicalId: String,
+    ): Pair<List<VideoFeedItem>, Page?> = withContext(Dispatchers.IO) {
+        try {
+            val newPage = tabExtractor.getPage(page)
+            val items = newPage?.items?.filterIsInstance<StreamInfoItem>()?.map {
+                extractVideoFeedItem(it, canonicalId)
+            } ?: emptyList()
+            val hasNext = newPage?.hasNextPage() == true
+            val nextPage = if (hasNext) newPage?.nextPage else null
+            Pair(items, nextPage)
+        } catch (e: Exception) {
+            Pair(emptyList(), null)
+        }
+    }
+
+    private fun extractVideoFeedItem(item: StreamInfoItem, fallbackChannelId: String): VideoFeedItem {
+        val videoUrl = item.url.orEmpty()
+        val videoId = try {
+            val idMethod = item.javaClass.methods.firstOrNull { it.name == "getId" && it.parameterCount == 0 }
+            (idMethod?.invoke(item) as? String)?.takeIf { it.isNotBlank() }
+        } catch (e: Throwable) {
+            null
+        } ?: videoUrl.substringAfterLast("v=").substringBefore("&").ifBlank { videoUrl }
+
+        val thumbnailUrl = try {
+            item.thumbnails?.lastOrNull()?.url ?: item.thumbnails?.firstOrNull()?.url
+        } catch (e: Throwable) {
+            null
+        }
+
+        val uploadDateText = try {
+            item.textualUploadDate
+        } catch (e: Throwable) {
+            null
+        }
+
+        val uploadTimestamp = extractUploadTimestamp(item, uploadDateText)
+
+        val durationSeconds = try {
+            item.duration
+        } catch (e: Throwable) {
+            -1L
+        }
+
+        val title = try {
+            item.name.orEmpty()
+        } catch (e: Throwable) {
+            ""
+        }
+
+        val uploader = try {
+            item.uploaderName.orEmpty()
+        } catch (e: Throwable) {
+            ""
+        }
+
+        return VideoFeedItem(
+            videoId = videoId,
+            title = title,
+            channelName = uploader,
+            channelId = fallbackChannelId,
+            thumbnailUrl = thumbnailUrl,
+            uploadDateText = uploadDateText,
+            uploadTimestamp = uploadTimestamp,
+            durationSeconds = durationSeconds,
+            url = videoUrl,
+        )
     }
 
     private fun extractUploadTimestamp(item: StreamInfoItem, textualDate: String?): Long {
