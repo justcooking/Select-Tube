@@ -54,6 +54,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.ClosedCaptionOff
@@ -159,6 +160,7 @@ private fun lerpDp(start: Dp, stop: Dp, fraction: Float): Dp =
 fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel(),
     onNavigateBack: () -> Unit = { viewModel.collapsePlayer() },
+    onChannelClick: (String, String) -> Unit = { _, _ -> },
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val isExpanded by viewModel.isPlayerExpanded.collectAsStateWithLifecycle()
@@ -185,6 +187,16 @@ fun PlayerScreen(
     var enteredViaAutoRotate by remember { mutableStateOf(false) }
     var hasSeenLandscapeOrientation by remember { mutableStateOf(false) }
     var isManuallyLockedToPortrait by remember { mutableStateOf(false) }
+
+    // Detect if current video has vertical aspect ratio (e.g. Shorts or portrait videos)
+    val isVerticalVideo = remember(state.videoWidth, state.videoHeight, state.playbackInfo?.videoWidth, state.playbackInfo?.videoHeight) {
+        when {
+            state.videoWidth > 0 && state.videoHeight > 0 -> state.videoHeight > state.videoWidth
+            (state.playbackInfo?.videoHeight ?: 0) > 0 && (state.playbackInfo?.videoWidth ?: 0) > 0 ->
+                (state.playbackInfo?.videoHeight ?: 0) > (state.playbackInfo?.videoWidth ?: 0)
+            else -> false
+        }
+    }
 
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -250,7 +262,7 @@ fun PlayerScreen(
                         act.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                     }
                 } else if (isDeviceLandscape) {
-                    if (!isManuallyLockedToPortrait) {
+                    if (!isManuallyLockedToPortrait && !isVerticalVideo) {
                         hasSeenLandscapeOrientation = true
                         if (!currentInFullscreenMode) {
                             enteredViaAutoRotate = true
@@ -724,9 +736,20 @@ fun PlayerScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            val channelId = state.playbackInfo?.channelId.orEmpty()
+                                .ifBlank { state.playbackInfo?.channelName.orEmpty() }
+                            val channelName = state.playbackInfo?.channelName.orEmpty()
+                            val isChannelClickable = channelId.isNotBlank() || channelName.isNotBlank()
+
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(enabled = isChannelClickable) {
+                                        onChannelClick(channelId, channelName)
+                                    }
+                                    .padding(vertical = 4.dp, horizontal = 2.dp),
                             ) {
                                 val avatarUrl = state.playbackInfo?.channelAvatarUrl
                                 if (!avatarUrl.isNullOrBlank()) {
@@ -756,7 +779,7 @@ fun PlayerScreen(
 
                                 Spacer(modifier = Modifier.width(12.dp))
 
-                                Column {
+                                Column(modifier = Modifier.weight(1f, fill = false)) {
                                     Text(
                                         text = state.playbackInfo?.channelName.orEmpty(),
                                         style = MaterialTheme.typography.bodyMedium,
@@ -776,6 +799,16 @@ fun PlayerScreen(
                                         text = subText,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+
+                                if (isChannelClickable) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = "View Channel",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(16.dp),
                                     )
                                 }
                             }
@@ -1263,8 +1296,8 @@ fun PlayerScreen(
                                             ),
                                         )
                                         .padding(
-                                            horizontal = if (inFullscreenMode) 28.dp else 12.dp,
-                                            vertical = if (inFullscreenMode) 14.dp else 8.dp,
+                                            horizontal = if (inFullscreenMode) (if (isLandscape) 28.dp else 16.dp) else 12.dp,
+                                            vertical = if (inFullscreenMode) (if (isLandscape) 14.dp else 24.dp) else 8.dp,
                                         ),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1507,7 +1540,11 @@ fun PlayerScreen(
                                                     enteredViaAutoRotate = false
                                                     hasSeenLandscapeOrientation = false
                                                     isManuallyLockedToPortrait = false
-                                                    activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                                    if (isVerticalVideo) {
+                                                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                                                    } else {
+                                                        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                                    }
                                                 }
                                                 lastUserInteractionTime = System.currentTimeMillis()
                                             },
@@ -1560,8 +1597,8 @@ fun PlayerScreen(
                                             ),
                                         )
                                         .padding(
-                                            horizontal = if (inFullscreenMode) 28.dp else 14.dp,
-                                            vertical = if (inFullscreenMode) 12.dp else 6.dp,
+                                            horizontal = if (inFullscreenMode) (if (isLandscape) 28.dp else 16.dp) else 14.dp,
+                                            vertical = if (inFullscreenMode) (if (isLandscape) 12.dp else 24.dp) else 6.dp,
                                         ),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {

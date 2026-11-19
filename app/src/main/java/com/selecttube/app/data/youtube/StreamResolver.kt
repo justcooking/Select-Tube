@@ -21,11 +21,15 @@ sealed class PlayableStream {
         val videoQuality: String,
         val audioBitrate: Int,
         val audioTrack: String? = null,
+        val width: Int = 0,
+        val height: Int = 0,
     ) : PlayableStream()
 
     data class Progressive(
         val streamUrl: String,
         val quality: String,
+        val width: Int = 0,
+        val height: Int = 0,
     ) : PlayableStream()
 }
 
@@ -68,6 +72,8 @@ data class ResolvedPlaybackInfo(
     val description: String? = null,
     val descriptionType: DescriptionType = DescriptionType.PLAIN_TEXT,
     val chapters: List<ChapterInfo> = emptyList(),
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0,
 )
 
 class StreamResolutionException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -185,6 +191,14 @@ class StreamResolver @Inject constructor() {
 
         val chapters = extractChapters(streamInfo.streamSegments, descriptionText)
 
+        val isShort = fullUrl.contains("/shorts/")
+        val (streamW, streamH) = when (playableStream) {
+            is PlayableStream.Adaptive -> Pair(playableStream.width, playableStream.height)
+            is PlayableStream.Progressive -> Pair(playableStream.width, playableStream.height)
+        }
+        val resolvedWidth = if (streamW > 0) streamW else if (isShort) 1080 else 0
+        val resolvedHeight = if (streamH > 0) streamH else if (isShort) 1920 else 0
+
         ResolvedPlaybackInfo(
             videoId = videoId,
             title = title,
@@ -205,6 +219,8 @@ class StreamResolver @Inject constructor() {
             description = descriptionText,
             descriptionType = descriptionType,
             chapters = chapters,
+            videoWidth = resolvedWidth,
+            videoHeight = resolvedHeight,
         )
     }
 
@@ -372,6 +388,8 @@ class StreamResolver @Inject constructor() {
                     videoQuality = quality,
                     audioBitrate = bestAudio.averageBitrate,
                     audioTrack = audioTrackName,
+                    width = bestVideo.width,
+                    height = bestVideo.height,
                 )
             }
         }
@@ -397,6 +415,8 @@ class StreamResolver @Inject constructor() {
                 return PlayableStream.Progressive(
                     streamUrl = streamUrl,
                     quality = quality,
+                    width = bestProgressive.width,
+                    height = bestProgressive.height,
                 )
             }
         }

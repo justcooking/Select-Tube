@@ -17,6 +17,8 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -77,6 +79,8 @@ data class PlaybackState(
     val audioTrack: String? = null,
     val selectedSubtitle: String? = null,
     val isBackgroundOnly: Boolean = false,
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0,
 )
 
 /**
@@ -311,6 +315,29 @@ class PlayerManager @Inject constructor(
             override fun onPlayerError(error: PlaybackException) {
                 handlePlayerError(error)
             }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    _playbackState.update {
+                        it.copy(
+                            videoWidth = videoSize.width,
+                            videoHeight = videoSize.height,
+                        )
+                    }
+                }
+            }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                val size = player.videoSize
+                if (size.width > 0 && size.height > 0) {
+                    _playbackState.update {
+                        it.copy(
+                            videoWidth = size.width,
+                            videoHeight = size.height,
+                        )
+                    }
+                }
+            }
         })
 
         // Periodic ticker for current position
@@ -447,6 +474,8 @@ class PlayerManager @Inject constructor(
                         audioTrack = audioTrackLabel,
                         selectedSubtitle = null,
                         durationMs = (info.durationSeconds * 1000L).coerceAtLeast(0L),
+                        videoWidth = info.videoWidth,
+                        videoHeight = info.videoHeight,
                     )
                 }
             } catch (e: CancellationException) {
