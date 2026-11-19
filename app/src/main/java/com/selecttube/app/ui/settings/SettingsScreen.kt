@@ -24,12 +24,14 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +57,7 @@ fun SettingsScreen(
     var channelToRemove by remember { mutableStateOf<ChannelItemUiState?>(null) }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
@@ -63,6 +66,11 @@ fun SettingsScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                ),
             )
         },
         floatingActionButton = {
@@ -151,6 +159,10 @@ private fun ChannelItem(
     onCancelPending: () -> Unit,
 ) {
     ListItem(
+        colors = ListItemDefaults.colors(
+            containerColor = MaterialTheme.colorScheme.background,
+            headlineColor = MaterialTheme.colorScheme.onBackground,
+        ),
         headlineContent = { Text(channel.name) },
         supportingContent = {
             if (!channel.isActive && channel.remainingTimeFormatted != null) {
