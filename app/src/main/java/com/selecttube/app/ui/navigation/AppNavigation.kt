@@ -23,6 +23,7 @@ import com.selecttube.app.ui.channel.ChannelScreen
 import com.selecttube.app.ui.feed.FeedScreen
 import com.selecttube.app.ui.player.PlayerScreen
 import com.selecttube.app.ui.player.PlayerViewModel
+import com.selecttube.app.ui.search.SearchScreen
 import com.selecttube.app.ui.settings.SettingsScreen
 
 @Composable
@@ -56,6 +57,7 @@ fun AppNavigation(
                 composable(Screen.Feed.route) {
                     FeedScreen(
                         onOpenSettings = { navController.navigate(Screen.Settings.route) },
+                        onOpenSearch = { navController.navigate(Screen.Search.route) },
                         onVideoClick = { video ->
                             playerViewModel.playVideo(
                                 urlOrId = video.url.ifBlank { video.videoId },
@@ -64,6 +66,25 @@ fun AppNavigation(
                                 thumbnailUrl = video.thumbnailUrl,
                             )
                             playerViewModel.expandPlayer()
+                        },
+                    )
+                }
+
+                composable(Screen.Search.route) {
+                    SearchScreen(
+                        onNavigateBack = { navController.popBackStack() },
+                        onVideoClick = { video ->
+                            playerViewModel.playVideo(
+                                urlOrId = video.url.ifBlank { video.videoId },
+                                title = video.title,
+                                channelName = video.channelName,
+                                thumbnailUrl = video.thumbnailUrl,
+                            )
+                            playerViewModel.expandPlayer()
+                        },
+                        onChannelClick = { channelId, channelName ->
+                            playerViewModel.collapsePlayer()
+                            navController.navigate(Screen.Channel.createRoute(channelId, channelName))
                         },
                     )
                 }

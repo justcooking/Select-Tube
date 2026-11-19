@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayCircleOutline
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
@@ -53,6 +54,7 @@ import com.selecttube.app.data.youtube.VideoFeedItem
 @Composable
 fun FeedScreen(
     onOpenSettings: () -> Unit,
+    onOpenSearch: () -> Unit = {},
     onVideoClick: (VideoFeedItem) -> Unit = {},
     viewModel: FeedViewModel = hiltViewModel(),
 ) {
@@ -64,6 +66,9 @@ fun FeedScreen(
             TopAppBar(
                 title = { Text("Select Tube") },
                 actions = {
+                    IconButton(onClick = onOpenSearch) {
+                        Icon(Icons.Default.Search, contentDescription = "Search")
+                    }
                     IconButton(onClick = onOpenSettings) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
                     }

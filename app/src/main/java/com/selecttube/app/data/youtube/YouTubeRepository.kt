@@ -1,6 +1,10 @@
 package com.selecttube.app.data.youtube
 
+import com.selecttube.app.domain.Channel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.Page
 import org.schabi.newpipe.extractor.ServiceList
@@ -12,6 +16,7 @@ import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.StreamType
 import java.io.IOException
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -136,10 +141,14 @@ class YouTubeRepository @Inject constructor() {
 
         return items.filterIsInstance<ChannelInfoItem>().map { item ->
             val channelUrl = item.url.orEmpty()
-            val id = try {
+            val rawId = try {
                 youtubeService.channelLHFactory.fromUrl(channelUrl).id
             } catch (e: Throwable) {
                 channelUrl.substringAfterLast("/").substringBefore("?")
+            }
+            val id = rawId.removePrefix("channel/").removePrefix("c/").removePrefix("user/")
+            if (id.startsWith("UC") && id.length in 22..26) {
+                canonicalIdCache[id] = id
             }
 
             val avatarUrl = try {
@@ -159,6 +168,242 @@ class YouTubeRepository @Inject constructor() {
         }
     }
 
+    private val canonicalIdCache = ConcurrentHashMap<String, String>()
+
+    private data class ChannelTargetProfile(
+        val channel: Channel,
+        val canonicalId: String,
+        val handle: String?,
+        val normalizedName: String,
+    )
+
+    private data class ParsedUploader(
+        val canonicalId: String?,
+        val handle: String?,
+        val rawUploaderName: String,
+        val normalizedUploaderName: String,
+        val uploaderUrl: String,
+    )
+
+    private suspend fun resolveCanonicalId(rawIdentifier: String): String {
+        val trimmed = rawIdentifier.trim()
+        if (trimmed.startsWith("UC") && trimmed.length in 22..26) {
+            return trimmed
+        }
+        val cached = canonicalIdCache[trimmed]
+        if (cached != null) return cached
+
+        return try {
+            val url = normalizeToYouTubeChannelUrl(trimmed)
+            val extractor = youtubeService.getChannelExtractor(url)
+            extractor.fetchPage()
+            val resolvedId = extractor.id.ifBlank {
+                try {
+                    youtubeService.channelLHFactory.fromUrl(url).id
+                        .removePrefix("channel/").removePrefix("c/").removePrefix("user/")
+                } catch (_: Throwable) {
+                    trimmed
+                }
+            }
+            if (resolvedId.isNotBlank() && resolvedId.startsWith("UC")) {
+                canonicalIdCache[trimmed] = resolvedId
+            }
+            resolvedId
+        } catch (_: Exception) {
+            trimmed
+        }
+    }
+
+    private fun parseUploader(item: StreamInfoItem): ParsedUploader? {
+        val uploaderName = item.uploaderName.orEmpty().trim()
+        val uploaderUrl = item.uploaderUrl.orEmpty().trim()
+        if (uploaderName.isBlank() && uploaderUrl.isBlank()) return null
+
+        var canonicalId: String? = null
+        var handle: String? = null
+
+        if (uploaderUrl.isNotBlank()) {
+            val cleanUrl = uploaderUrl.removeSuffix("/").substringBefore("?")
+            if (cleanUrl.contains("/channel/")) {
+                val segment = cleanUrl.substringAfterLast("/channel/").substringBefore("/")
+                if (segment.startsWith("UC", ignoreCase = true) && segment.length in 22..26) {
+                    canonicalId = segment
+                }
+            } else if (cleanUrl.contains("/@")) {
+                val seg = cleanUrl.substringAfterLast("/@").substringBefore("/").trim()
+                if (seg.isNotBlank()) {
+                    handle = seg.lowercase()
+                }
+            }
+
+            // Fallback via NewPipe's channelLHFactory
+            if (canonicalId == null && handle == null) {
+                try {
+                    val rawId = youtubeService.channelLHFactory.fromUrl(cleanUrl).id
+                    val cleanId = rawId.removePrefix("channel/").removePrefix("c/").removePrefix("user/")
+                    if (cleanId.startsWith("UC", ignoreCase = true) && cleanId.length in 22..26) {
+                        canonicalId = cleanId
+                    } else if (cleanId.startsWith("@")) {
+                        handle = cleanId.removePrefix("@").lowercase()
+                    }
+                } catch (_: Throwable) {
+                    // Ignore parsing error
+                }
+            }
+        }
+
+        return ParsedUploader(
+            canonicalId = canonicalId,
+            handle = handle,
+            rawUploaderName = uploaderName,
+            normalizedUploaderName = uploaderName.lowercase(),
+            uploaderUrl = uploaderUrl,
+        )
+    }
+
+    private fun matchesChannelStrictly(
+        uploader: ParsedUploader,
+        profile: ChannelTargetProfile,
+    ): Boolean {
+        // 1. Exact Canonical ID Match
+        if (!uploader.canonicalId.isNullOrBlank() && profile.canonicalId.startsWith("UC")) {
+            if (uploader.canonicalId.equals(profile.canonicalId, ignoreCase = true)) {
+                return true
+            }
+        }
+
+        // 2. Exact Handle Match
+        if (!uploader.handle.isNullOrBlank() && !profile.handle.isNullOrBlank()) {
+            if (uploader.handle.equals(profile.handle, ignoreCase = true)) {
+                return true
+            }
+        }
+
+        // 3. Exact Display Name Match (must not contradict verified ID or handle)
+        if (uploader.normalizedUploaderName.isNotBlank() &&
+            uploader.normalizedUploaderName == profile.normalizedName
+        ) {
+            if (uploader.canonicalId != null && profile.canonicalId.startsWith("UC")) {
+                if (!uploader.canonicalId.equals(profile.canonicalId, ignoreCase = true)) {
+                    return false
+                }
+            }
+            if (uploader.handle != null && !profile.handle.isNullOrBlank()) {
+                if (!uploader.handle.equals(profile.handle, ignoreCase = true)) {
+                    return false
+                }
+            }
+            return true
+        }
+
+        return false
+    }
+
+    /**
+     * Searches for videos strictly scoped to the user's active allowed channels.
+     * Guaranteed zero-leakage: Any video not belonging to an active allowed channel is discarded.
+     */
+    suspend fun searchCuratedVideos(
+        query: String,
+        allowedChannels: List<Channel>,
+        targetChannelId: String? = null,
+    ): List<VideoFeedItem> = withContext(Dispatchers.IO) {
+        val trimmedQuery = query.trim()
+        if (trimmedQuery.isBlank() || allowedChannels.isEmpty()) return@withContext emptyList()
+
+        val activeChannels = allowedChannels.filter { it.isActive }
+        if (activeChannels.isEmpty()) return@withContext emptyList()
+
+        val filteredTargets = if (!targetChannelId.isNullOrBlank()) {
+            activeChannels.filter { it.channelId.equals(targetChannelId, ignoreCase = true) }
+        } else {
+            activeChannels
+        }
+        if (filteredTargets.isEmpty()) return@withContext emptyList()
+
+        // 1. Pre-resolve canonical profiles for target channels in parallel
+        val targetProfiles: List<ChannelTargetProfile> = coroutineScope {
+            filteredTargets.map { channel ->
+                async {
+                    val canonicalId = resolveCanonicalId(channel.channelId)
+                    val handle = when {
+                        channel.channelId.startsWith("@") -> channel.channelId.removePrefix("@").lowercase().trim()
+                        !channel.channelId.startsWith("UC") -> channel.channelId.removePrefix("@").lowercase().trim()
+                        else -> null
+                    }
+                    ChannelTargetProfile(
+                        channel = channel,
+                        canonicalId = canonicalId,
+                        handle = handle,
+                        normalizedName = channel.name.trim().lowercase(),
+                    )
+                }
+            }.awaitAll()
+        }
+
+        val results = mutableListOf<VideoFeedItem>()
+        val seenVideoIds = mutableSetOf<String>()
+
+        // 2. Parallel multi-angle targeted channel search across target profiles
+        coroutineScope {
+            val deferreds = targetProfiles.map { profile ->
+                async {
+                    val profileResults = mutableListOf<VideoFeedItem>()
+                    val channelQueries = mutableListOf<String>()
+
+                    // Angle A: Query with exact channel name
+                    channelQueries.add("$trimmedQuery \"${profile.channel.name}\"")
+
+                    // Angle B: Query with channel handle if known
+                    if (!profile.handle.isNullOrBlank()) {
+                        channelQueries.add("$trimmedQuery @${profile.handle}")
+                    } else {
+                        // Angle C: Query with channel name without quotes
+                        channelQueries.add("$trimmedQuery ${profile.channel.name}")
+                    }
+
+                    for (tQuery in channelQueries.distinct()) {
+                        try {
+                            val searchExtractor = youtubeService.getSearchExtractor(
+                                tQuery,
+                                Collections.singletonList("videos"),
+                                null,
+                            )
+                            searchExtractor.fetchPage()
+                            val pageItems = searchExtractor.initialPage?.items?.filterIsInstance<StreamInfoItem>().orEmpty()
+
+                            for (item in pageItems) {
+                                val uploader = parseUploader(item) ?: continue
+                                if (matchesChannelStrictly(uploader, profile)) {
+                                    val video = extractVideoFeedItem(item, profile.channel.channelId)
+                                    profileResults.add(video)
+                                }
+                            }
+                        } catch (_: Throwable) {
+                            // Non-fatal per-query error
+                        }
+                    }
+                    profileResults
+                }
+            }
+
+            deferreds.awaitAll().forEach { list ->
+                list.forEach { video ->
+                    if (seenVideoIds.add(video.videoId)) {
+                        results.add(video)
+                    }
+                }
+            }
+        }
+
+        // Rank results: exact query in title first, then upload recency
+        val lowerQuery = trimmedQuery.lowercase()
+        results.sortedWith(
+            compareByDescending<VideoFeedItem> { it.title.lowercase().contains(lowerQuery) }
+                .thenByDescending { it.uploadTimestamp }
+        )
+    }
+
     /**
      * Fetches up to [maxVideos] recent regular videos from a channel's Videos tab.
      * Excludes Shorts and live streams.
@@ -168,18 +413,7 @@ class YouTubeRepository @Inject constructor() {
         channelId: String,
         maxVideos: Int = 15,
     ): List<VideoFeedItem> = withContext(Dispatchers.IO) {
-        val canonicalId = if (channelId.startsWith("UC") && channelId.length in 22..26) {
-            channelId
-        } else {
-            try {
-                val url = normalizeToYouTubeChannelUrl(channelId)
-                val extractor = youtubeService.getChannelExtractor(url)
-                extractor.fetchPage()
-                extractor.id.ifBlank { channelId }
-            } catch (e: Exception) {
-                channelId
-            }
-        }
+        val canonicalId = resolveCanonicalId(channelId)
 
         val tabExtractor = try {
             youtubeService.getChannelTabExtractorFromId(canonicalId, ChannelTabs.VIDEOS).apply {
@@ -240,18 +474,7 @@ class YouTubeRepository @Inject constructor() {
         channelId: String,
         tabKey: String,
     ): ChannelTabResult = withContext(Dispatchers.IO) {
-        val canonicalId = if (channelId.startsWith("UC") && channelId.length in 22..26) {
-            channelId
-        } else {
-            try {
-                val url = normalizeToYouTubeChannelUrl(channelId)
-                val extractor = youtubeService.getChannelExtractor(url)
-                extractor.fetchPage()
-                extractor.id.ifBlank { channelId }
-            } catch (e: Exception) {
-                channelId
-            }
-        }
+        val canonicalId = resolveCanonicalId(channelId)
 
         try {
             val tabExtractor = youtubeService.getChannelTabExtractorFromId(canonicalId, tabKey).apply {
