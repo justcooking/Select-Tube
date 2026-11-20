@@ -2,6 +2,7 @@ package com.selecttube.app.ui.feed
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.repository.ChannelRepository
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.data.youtube.YouTubeRepository
@@ -20,12 +21,24 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Collections
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
+
+data class PlaylistItemUiState(
+    val playlistId: String,
+    val name: String,
+    val thumbnailUrl: String?,
+    val uploaderName: String?,
+    val videoCount: Long,
+    val isActive: Boolean,
+    val remainingCountdown: String?,
+)
 
 data class FeedUiState(
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val videos: List<VideoFeedItem> = emptyList(),
+    val playlists: List<PlaylistItemUiState> = emptyList(),
     val channelErrors: Map<String, String> = emptyMap(),
     val hasActiveChannels: Boolean = false,
 )
@@ -64,6 +77,37 @@ class FeedViewModel @Inject constructor(
                 .collect { activeList ->
                     onActiveChannelsChanged(activeList)
                 }
+        }
+
+        viewModelScope.launch {
+            combine(channelRepository.playlists, ticker) { playlists, now ->
+                playlists.map { p ->
+                    val isActive = p.activationTimestamp == null || now >= p.activationTimestamp
+                    val msUntilActive = if (p.activationTimestamp == null) 0L else maxOf(0L, p.activationTimestamp - now)
+                    val countdown = if (!isActive) {
+                        val hours = TimeUnit.MILLISECONDS.toHours(msUntilActive)
+                        val minutes = TimeUnit.MILLISECONDS.toMinutes(msUntilActive) % 60
+                        val seconds = TimeUnit.MILLISECONDS.toSeconds(msUntilActive) % 60
+                        when {
+                            hours > 0 -> "Active in ${hours}h ${minutes}m"
+                            minutes > 0 -> "Active in ${minutes}m ${seconds}s"
+                            else -> "Active in ${seconds}s"
+                        }
+                    } else null
+
+                    PlaylistItemUiState(
+                        playlistId = p.playlistId,
+                        name = p.name,
+                        thumbnailUrl = p.thumbnailUrl,
+                        uploaderName = p.uploaderName,
+                        videoCount = p.videoCount,
+                        isActive = isActive,
+                        remainingCountdown = countdown,
+                    )
+                }
+            }.collect { playlistItems ->
+                _uiState.update { it.copy(playlists = playlistItems) }
+            }
         }
     }
 
