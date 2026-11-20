@@ -1,5 +1,7 @@
 package com.selecttube.app.ui.channel
 
+import com.selecttube.app.data.preferences.AppMode
+
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -40,6 +42,8 @@ data class ChannelUiState(
     val isRefreshing: Boolean = false,
     val channel: ResolvedChannel? = null,
     val selectedCategory: ChannelCategory = ChannelCategory.VIDEOS,
+    val availableCategories: List<ChannelCategory> = ChannelCategory.entries,
+    val isShortsDisabled: Boolean = false,
     val videos: List<VideoFeedItem> = emptyList(),
     val isLoadingTab: Boolean = false,
     val isLoadingMore: Boolean = false,
@@ -98,7 +102,37 @@ class ChannelViewModel @Inject constructor(
 
     init {
         observeChannelCurationStatus()
+        observeParentalControls()
         loadChannelProfile(isRefresh = false)
+    }
+
+    private fun observeParentalControls() {
+        viewModelScope.launch {
+            combine(
+                channelRepository.appMode,
+                channelRepository.parentalShortsDisabled,
+            ) { mode, shortsDisabled ->
+                mode == AppMode.CHILD && shortsDisabled
+            }.collect { disabled ->
+                val categories = if (disabled) {
+                    listOf(ChannelCategory.VIDEOS, ChannelCategory.LIVESTREAMS)
+                } else {
+                    ChannelCategory.entries
+                }
+                _uiState.update { current ->
+                    val newCategory = if (disabled && current.selectedCategory == ChannelCategory.SHORTS) {
+                        ChannelCategory.VIDEOS
+                    } else {
+                        current.selectedCategory
+                    }
+                    current.copy(
+                        isShortsDisabled = disabled,
+                        availableCategories = categories,
+                        selectedCategory = newCategory,
+                    )
+                }
+            }
+        }
     }
 
     private fun matchesChannel(
@@ -316,15 +350,38 @@ class ChannelViewModel @Inject constructor(
 
     fun onAllowChannelClick() {
         viewModelScope.launch {
-            val hasPassword = channelRepository.hasPassword()
-            _uiState.update {
-                it.copy(
-                    showPasswordDialog = true,
-                    isFirstTimePasswordSetup = !hasPassword,
-                    passwordInput = "",
-                    confirmPasswordInput = "",
-                    passwordError = null,
+            val appMode = channelRepository.getAppMode()
+            if (appMode == AppMode.ADULT) {
+                // In Adult Mode: No password needed!
+                val count = channelRepository.channelCount()
+                val now = System.currentTimeMillis()
+                val activationTime = if (count == 0) null else (now + ChannelConfig.ACTIVATION_DELAY_MS)
+                val state = _uiState.value
+                val channel = state.channel
+                val targetId = channel?.channelId?.ifBlank { canonicalChannelId ?: channelIdParam }
+                    ?: (canonicalChannelId ?: channelIdParam)
+                val targetName = channel?.name?.ifBlank { channelNameParam } ?: channelNameParam
+
+                val entity = ChannelEntity(
+                    channelId = targetId,
+                    name = targetName,
+                    thumbnailUrl = channel?.thumbnailUrl,
+                    activationTimestamp = activationTime,
+                    addedAt = now,
                 )
+                channelRepository.addChannel(entity)
+            } else {
+                // In Child Mode: Parent Master Password is required
+                val hasPassword = channelRepository.hasPassword()
+                _uiState.update {
+                    it.copy(
+                        showPasswordDialog = true,
+                        isFirstTimePasswordSetup = !hasPassword,
+                        passwordInput = "",
+                        confirmPasswordInput = "",
+                        passwordError = null,
+                    )
+                }
             }
         }
     }

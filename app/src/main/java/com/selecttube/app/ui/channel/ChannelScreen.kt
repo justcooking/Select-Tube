@@ -655,7 +655,7 @@ fun ChannelScreen(
                                 // Category Tab Row: Videos, Shorts, Live
                                 item(key = "category_tabs") {
                                     HorizontalDivider(color = YouTubeBorderColor, thickness = 0.5.dp)
-                                    val categories = ChannelCategory.entries
+                                    val categories = state.availableCategories
                                     val selectedIndex = categories.indexOf(state.selectedCategory)
 
                                     TabRow(

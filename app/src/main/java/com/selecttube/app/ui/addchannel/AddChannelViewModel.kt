@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.selecttube.app.config.ChannelConfig
 import com.selecttube.app.data.db.ChannelEntity
+import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.repository.ChannelRepository
 import com.selecttube.app.data.youtube.ChannelNotFoundException
 import com.selecttube.app.data.youtube.ResolvedChannel
@@ -29,7 +30,9 @@ data class StagedChannel(
 )
 
 data class AddChannelUiState(
+    val appMode: AppMode = AppMode.ADULT,
     val isFirstBatch: Boolean = true,
+    val hasPassword: Boolean = false,
     val selectedTab: AddChannelTab = AddChannelTab.SEARCH,
     // Search tab
     val searchQuery: String = "",
@@ -58,13 +61,21 @@ class AddChannelViewModel @Inject constructor(
     val uiState: StateFlow<AddChannelUiState> = _uiState.asStateFlow()
 
     init {
-        checkIfFirstBatch()
+        loadSetupState()
     }
 
-    private fun checkIfFirstBatch() {
+    private fun loadSetupState() {
         viewModelScope.launch {
-            val hasPassword = channelRepository.hasPassword()
-            _uiState.update { it.copy(isFirstBatch = !hasPassword) }
+            val count = channelRepository.channelCount()
+            val mode = channelRepository.getAppMode()
+            val hasPass = channelRepository.hasPassword()
+            _uiState.update {
+                it.copy(
+                    isFirstBatch = count == 0,
+                    appMode = mode,
+                    hasPassword = hasPass,
+                )
+            }
         }
     }
 
@@ -99,22 +110,12 @@ class AddChannelViewModel @Inject constructor(
             _uiState.update { it.copy(isSearching = true, errorMessage = null) }
             try {
                 val results = youTubeRepository.searchChannels(query)
-                if (results.isEmpty()) {
-                    _uiState.update {
-                        it.copy(
-                            isSearching = false,
-                            searchResults = emptyList(),
-                            errorMessage = "No channels found matching '$query'",
-                        )
-                    }
-                } else {
-                    _uiState.update {
-                        it.copy(
-                            isSearching = false,
-                            searchResults = results,
-                            errorMessage = null,
-                        )
-                    }
+                _uiState.update {
+                    it.copy(
+                        isSearching = false,
+                        searchResults = results,
+                        errorMessage = if (results.isEmpty()) "No channels found matching '$query'" else null,
+                    )
                 }
             } catch (e: Exception) {
                 _uiState.update {
@@ -191,11 +192,8 @@ class AddChannelViewModel @Inject constructor(
     }
 
     fun removeStagedChannel(channelId: String) {
-        _uiState.update { state ->
-            state.copy(
-                stagedChannels = state.stagedChannels.filterNot { it.channelId == channelId },
-                errorMessage = null,
-            )
+        _uiState.update {
+            it.copy(stagedChannels = it.stagedChannels.filter { ch -> ch.channelId != channelId })
         }
     }
 
@@ -213,73 +211,80 @@ class AddChannelViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
 
-            if (state.isFirstBatch) {
-                // First-ever batch setup: password entry twice
-                val password = state.passwordInput
-                val confirmPassword = state.confirmPasswordInput
+            val now = System.currentTimeMillis()
+            val activationTime = if (state.isFirstBatch) null else (now + ChannelConfig.ACTIVATION_DELAY_MS)
 
-                if (password.isBlank()) {
-                    _uiState.update {
-                        it.copy(isLoading = false, errorMessage = "Please set a password")
-                    }
-                    return@launch
-                }
-                if (password != confirmPassword) {
-                    _uiState.update {
-                        it.copy(isLoading = false, errorMessage = "Passwords do not match")
-                    }
-                    return@launch
-                }
-
-                val hash = PasswordSecurity.hash(password)
-                channelRepository.setPasswordHash(hash)
-
-                // First-ever batch: active immediately
-                val now = System.currentTimeMillis()
+            if (state.appMode == AppMode.ADULT) {
+                // In Adult Mode: No password required!
+                // Initial batch is active immediately; subsequent batches require 2-hour wait.
                 val entities = staged.map { item ->
                     ChannelEntity(
                         channelId = item.channelId,
                         name = item.displayName,
                         thumbnailUrl = item.thumbnailUrl,
-                        activationTimestamp = null,
+                        activationTimestamp = activationTime,
                         addedAt = now,
                     )
                 }
                 channelRepository.addChannels(entities)
-
                 _uiState.update { it.copy(isLoading = false, isSuccess = true) }
             } else {
-                // Subsequent batch: verify existing password
-                val password = state.passwordInput
-                if (password.isBlank()) {
-                    _uiState.update {
-                        it.copy(isLoading = false, errorMessage = "Please enter your password")
+                // In Child Mode: Parent Master Password is required
+                val hasPassword = channelRepository.hasPassword()
+
+                if (!hasPassword) {
+                    val password = state.passwordInput
+                    val confirmPassword = state.confirmPasswordInput
+
+                    if (password.isBlank()) {
+                        _uiState.update {
+                            it.copy(isLoading = false, errorMessage = "Please set a parent password")
+                        }
+                        return@launch
                     }
-                    return@launch
+                    if (password.length < 4) {
+                        _uiState.update {
+                            it.copy(isLoading = false, errorMessage = "Password must be at least 4 characters")
+                        }
+                        return@launch
+                    }
+                    if (password != confirmPassword) {
+                        _uiState.update {
+                            it.copy(isLoading = false, errorMessage = "Passwords do not match")
+                        }
+                        return@launch
+                    }
+
+                    val hash = PasswordSecurity.hash(password)
+                    channelRepository.setPasswordHash(hash)
+                } else {
+                    val password = state.passwordInput
+                    if (password.isBlank()) {
+                        _uiState.update {
+                            it.copy(isLoading = false, errorMessage = "Please enter parent password")
+                        }
+                        return@launch
+                    }
+
+                    val storedHash = channelRepository.getPasswordHash()
+                    if (storedHash == null || !PasswordSecurity.verify(password, storedHash)) {
+                        _uiState.update {
+                            it.copy(isLoading = false, errorMessage = "Incorrect parent password")
+                        }
+                        return@launch
+                    }
                 }
 
-                val storedHash = channelRepository.getPasswordHash()
-                if (storedHash == null || !PasswordSecurity.verify(password, storedHash)) {
-                    _uiState.update {
-                        it.copy(isLoading = false, errorMessage = "Incorrect password")
-                    }
-                    return@launch
-                }
-
-                // Subsequent batch: shared 2-hour wait
-                val now = System.currentTimeMillis()
-                val batchActivationTime = now + ChannelConfig.ACTIVATION_DELAY_MS
                 val entities = staged.map { item ->
                     ChannelEntity(
                         channelId = item.channelId,
                         name = item.displayName,
                         thumbnailUrl = item.thumbnailUrl,
-                        activationTimestamp = batchActivationTime,
+                        activationTimestamp = activationTime,
                         addedAt = now,
                     )
                 }
                 channelRepository.addChannels(entities)
-
                 _uiState.update { it.copy(isLoading = false, isSuccess = true) }
             }
         }

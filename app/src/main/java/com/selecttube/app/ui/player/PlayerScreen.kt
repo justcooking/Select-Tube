@@ -51,11 +51,13 @@ import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.ClosedCaptionOff
 import androidx.compose.material.icons.filled.Close
@@ -71,6 +73,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -80,10 +83,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -120,6 +125,8 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.fromHtml
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -164,6 +171,7 @@ fun PlayerScreen(
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val isExpanded by viewModel.isPlayerExpanded.collectAsStateWithLifecycle()
+    val parentalRestriction by viewModel.parentalRestriction.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val coroutineScope = rememberCoroutineScope()
@@ -1742,6 +1750,84 @@ fun PlayerScreen(
                 }
             }
         }
+    }
+
+    // ── Bedtime restriction dialog ───────────────────────────────────────────
+    if (parentalRestriction.isBedtimeRestricted) {
+        AlertDialog(
+            onDismissRequest = { /* Modal: require action */ },
+            icon = {
+                Icon(
+                    Icons.Default.Bedtime,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp),
+                )
+            },
+            title = { Text("Bedtime Schedule Active") },
+            text = {
+                Text(
+                    "It's bedtime! 🌙 Playback is locked until morning to ensure healthy rest.\n\nA parent can unlock playback if needed.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.requestParentalUnlock() }) {
+                    Text("Parent Unlock")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    viewModel.stop()
+                    onNavigateBack()
+                }) {
+                    Text("Close")
+                }
+            },
+        )
+    }
+
+    // ── Parental Unlock Dialog ───────────────────────────────────────────────
+    if (parentalRestriction.showUnlockDialog) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissParentalUnlockDialog() },
+            title = { Text("Parent Authentication") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Enter Parent Master Password to unlock playback:")
+                    OutlinedTextField(
+                        value = parentalRestriction.unlockPasswordInput,
+                        onValueChange = { viewModel.onParentalUnlockPasswordChange(it) },
+                        label = { Text("Parent Password") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        isError = parentalRestriction.unlockError != null,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    if (parentalRestriction.unlockError != null) {
+                        Text(
+                            text = parentalRestriction.unlockError ?: "",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { viewModel.submitParentalUnlock() },
+                    enabled = parentalRestriction.unlockPasswordInput.isNotBlank(),
+                ) {
+                    Text("Unlock")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissParentalUnlockDialog() }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 

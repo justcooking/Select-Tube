@@ -1,5 +1,7 @@
 package com.selecttube.app.ui.addchannel
 
+import com.selecttube.app.data.preferences.AppMode
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -306,91 +308,140 @@ fun AddChannelScreen(
             HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
             // ── Section 4: Password & Batch Confirmation ─────────────────────
-            if (state.isFirstBatch) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "First-Ever Batch Setup",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "All channels in this initial setup batch will become active immediately. Set a password to protect future additions. The password cannot be changed once set.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
+            if (state.appMode == AppMode.ADULT) {
+                // Adult Mode: Zero password friction!
+                if (state.isFirstBatch) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "Initial Channel Setup (Adult Mode)",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "All channels in this initial setup batch will become active immediately without any password.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                    }
+                } else {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "2-Hour Impulse Activation Wait",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "No password needed. To prevent impulse binging, these channels will activate after a 2-hour wait. You can cancel any addition during this time.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
-
-                OutlinedTextField(
-                    value = state.passwordInput,
-                    onValueChange = viewModel::onPasswordInputChange,
-                    label = { Text("Set Password") },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Next,
-                    ),
-                )
-
-                OutlinedTextField(
-                    value = state.confirmPasswordInput,
-                    onValueChange = viewModel::onConfirmPasswordInputChange,
-                    label = { Text("Confirm Password") },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done,
-                    ),
-                )
             } else {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = "Password Protected Batch",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Enter your password once to confirm this batch. All channels in this batch will share a single 2-hour wait before becoming active.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                // Child Mode: Parent Master Password
+                if (!state.hasPassword) {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "Parent Master Password Setup",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Set a Parent Master Password to authorize channel additions and lock parental controls. Your child will not be able to bypass it.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
                     }
-                }
 
-                OutlinedTextField(
-                    value = state.passwordInput,
-                    onValueChange = viewModel::onPasswordInputChange,
-                    label = { Text("Password") },
-                    leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Password,
-                        imeAction = ImeAction.Done,
-                    ),
-                )
+                    OutlinedTextField(
+                        value = state.passwordInput,
+                        onValueChange = viewModel::onPasswordInputChange,
+                        label = { Text("Parent Master Password") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Next,
+                        ),
+                    )
+
+                    OutlinedTextField(
+                        value = state.confirmPasswordInput,
+                        onValueChange = viewModel::onConfirmPasswordInputChange,
+                        label = { Text("Confirm Password") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done,
+                        ),
+                    )
+                } else {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "Parent Authorization Required",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Enter your Parent Master Password to authorize this channel batch.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = state.passwordInput,
+                        onValueChange = viewModel::onPasswordInputChange,
+                        label = { Text("Parent Master Password") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Password,
+                            imeAction = ImeAction.Done,
+                        ),
+                    )
+                }
             }
 
             // Error display
@@ -413,8 +464,10 @@ fun AddChannelScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             val buttonText = when {
-                state.isFirstBatch -> "Set Password & Add ${if (state.stagedChannels.isNotEmpty()) "(${state.stagedChannels.size})" else ""}"
-                else -> "Confirm & Add Batch ${if (state.stagedChannels.isNotEmpty()) "(${state.stagedChannels.size})" else ""}"
+                state.appMode == AppMode.ADULT && state.isFirstBatch -> "Confirm & Add Channels ${if (state.stagedChannels.isNotEmpty()) "(${state.stagedChannels.size})" else ""}"
+                state.appMode == AppMode.ADULT -> "Start 2-Hour Activation ${if (state.stagedChannels.isNotEmpty()) "(${state.stagedChannels.size})" else ""}"
+                state.isFirstBatch && !state.hasPassword -> "Set Password & Add ${if (state.stagedChannels.isNotEmpty()) "(${state.stagedChannels.size})" else ""}"
+                else -> "Authorize & Add Batch ${if (state.stagedChannels.isNotEmpty()) "(${state.stagedChannels.size})" else ""}"
             }
 
             Button(
