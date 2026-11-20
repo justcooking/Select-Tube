@@ -49,19 +49,14 @@ class SearchViewModel @Inject constructor(
     }
 
     fun onQueryChange(newQuery: String) {
-        _uiState.update {
-            it.copy(
-                query = newQuery,
-                hasSearched = false,
-                errorMessage = null,
-            )
-        }
-
+        val trimmed = newQuery.trim()
         debounceJob?.cancel()
-        if (newQuery.isBlank()) {
-            searchJob?.cancel()
+        searchJob?.cancel()
+
+        if (trimmed.isBlank()) {
             _uiState.update {
                 it.copy(
+                    query = newQuery,
                     results = emptyList(),
                     isLoading = false,
                     hasSearched = false,
@@ -69,6 +64,17 @@ class SearchViewModel @Inject constructor(
                 )
             }
             return
+        }
+
+        // When user enters a new search term, clear old results and show loading indicator
+        _uiState.update {
+            it.copy(
+                query = newQuery,
+                results = emptyList(),
+                isLoading = true,
+                hasSearched = false,
+                errorMessage = null,
+            )
         }
 
         // Debounce automatic search while typing
