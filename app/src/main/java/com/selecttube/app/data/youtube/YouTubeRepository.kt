@@ -17,6 +17,8 @@ import org.schabi.newpipe.extractor.stream.StreamType
 import java.io.IOException
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
+import org.schabi.newpipe.extractor.playlist.PlaylistExtractor
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,6 +32,17 @@ data class ResolvedChannel(
     val bannerUrl: String? = null,
 )
 
+data class ResolvedPlaylist(
+    val playlistId: String,
+    val name: String,
+    val thumbnailUrl: String?,
+    val uploaderName: String?,
+    val uploaderUrl: String? = null,
+    val videoCount: Long = 0,
+    val description: String? = null,
+    val url: String,
+)
+
 data class ChannelTabResult(
     val items: List<VideoFeedItem>,
     val hasNextPage: Boolean,
@@ -38,6 +51,7 @@ data class ChannelTabResult(
 )
 
 class ChannelNotFoundException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class PlaylistNotFoundException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 @Singleton
 class YouTubeRepository @Inject constructor() {
@@ -644,5 +658,120 @@ class YouTubeRepository @Inject constructor() {
             clean.startsWith("UC") && clean.length in 22..26 -> "https://www.youtube.com/channel/$clean"
             else -> "https://www.youtube.com/@$clean"
         }
+    }
+
+    fun normalizeToYouTubePlaylistUrl(input: String): String {
+        val trimmed = input.trim()
+        if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
+            if (trimmed.contains("list=")) {
+                val listId = trimmed.substringAfter("list=").substringBefore("&")
+                return "https://www.youtube.com/playlist?list=$listId"
+            }
+            return trimmed
+        }
+        val clean = trimmed.removePrefix("list=")
+        return "https://www.youtube.com/playlist?list=$clean"
+    }
+
+    suspend fun resolvePlaylist(input: String): ResolvedPlaylist = withContext(Dispatchers.IO) {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) {
+            throw PlaylistNotFoundException("Please provide a valid playlist ID or URL.")
+        }
+
+        val url = normalizeToYouTubePlaylistUrl(trimmed)
+        try {
+            val extractor = youtubeService.getPlaylistExtractor(url)
+            extractor.fetchPage()
+
+            val id = extractor.id.ifBlank {
+                try {
+                    youtubeService.playlistLHFactory.fromUrl(url).id
+                } catch (_: Exception) {
+                    url.substringAfter("list=").substringBefore("&")
+                }
+            }
+
+            val thumbUrl = extractor.thumbnails?.maxByOrNull { it.height * it.width }?.url
+
+            ResolvedPlaylist(
+                playlistId = id,
+                name = extractor.name.orEmpty().ifBlank { "Untitled Playlist" },
+                thumbnailUrl = thumbUrl,
+                uploaderName = extractor.uploaderName.orEmpty().ifBlank { null },
+                uploaderUrl = extractor.uploaderUrl.orEmpty().ifBlank { null },
+                videoCount = extractor.streamCount,
+                description = extractor.description?.content,
+                url = extractor.url.ifBlank { url },
+            )
+        } catch (e: Exception) {
+            throw PlaylistNotFoundException("Could not resolve playlist from '$input'.", e)
+        }
+    }
+
+    suspend fun searchPlaylists(query: String): List<ResolvedPlaylist> = withContext(Dispatchers.IO) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return@withContext emptyList()
+
+        try {
+            val searchExtractor = youtubeService.getSearchExtractor(
+                trimmed,
+                Collections.singletonList("playlists"),
+                null,
+            )
+            searchExtractor.fetchPage()
+            val page = searchExtractor.initialPage ?: return@withContext emptyList()
+            val items = page.items?.filterIsInstance<PlaylistInfoItem>().orEmpty()
+
+            items.map { item ->
+                val thumb = item.thumbnails?.maxByOrNull { it.height * it.width }?.url
+                val id = try {
+                    item.url.substringAfter("list=").substringBefore("&")
+                } catch (_: Exception) {
+                    ""
+                }
+                ResolvedPlaylist(
+                    playlistId = id,
+                    name = item.name.orEmpty(),
+                    thumbnailUrl = thumb,
+                    uploaderName = item.uploaderName,
+                    uploaderUrl = item.uploaderUrl,
+                    videoCount = item.streamCount,
+                    description = item.description?.content,
+                    url = item.url,
+                )
+            }.filter { it.playlistId.isNotBlank() }
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    suspend fun fetchPlaylistVideos(playlistIdOrUrl: String): Pair<ResolvedPlaylist, List<VideoFeedItem>> = withContext(Dispatchers.IO) {
+        val url = normalizeToYouTubePlaylistUrl(playlistIdOrUrl)
+        val extractor = youtubeService.getPlaylistExtractor(url)
+        extractor.fetchPage()
+
+        val id = extractor.id.ifBlank {
+            url.substringAfter("list=").substringBefore("&")
+        }
+        val thumbUrl = extractor.thumbnails?.maxByOrNull { it.height * it.width }?.url
+        val resolved = ResolvedPlaylist(
+            playlistId = id,
+            name = extractor.name.orEmpty().ifBlank { "Untitled Playlist" },
+            thumbnailUrl = thumbUrl,
+            uploaderName = extractor.uploaderName.orEmpty().ifBlank { null },
+            uploaderUrl = extractor.uploaderUrl.orEmpty().ifBlank { null },
+            videoCount = extractor.streamCount,
+            description = extractor.description?.content,
+            url = extractor.url.ifBlank { url },
+        )
+
+        val page = extractor.initialPage
+        val items = page?.items?.filterIsInstance<StreamInfoItem>().orEmpty()
+        val videos = items.map { item ->
+            extractVideoFeedItem(item, resolved.uploaderUrl.orEmpty())
+        }
+
+        Pair(resolved, videos)
     }
 }
