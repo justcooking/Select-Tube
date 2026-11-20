@@ -175,8 +175,8 @@ class ChannelViewModel @Inject constructor(
                     )
                 }
 
-                // If channel is active and videos have not been loaded yet, start loading them
-                if (isActive && (!wasActive || _uiState.value.videos.isEmpty()) && !_uiState.value.isLoadingTab) {
+                // If channel transitioned from pending to active, start loading initial videos
+                if (isActive && !wasActive && !_uiState.value.isLoadingTab) {
                     loadCategoryVideos(_uiState.value.selectedCategory, isRefresh = false)
                 }
             }

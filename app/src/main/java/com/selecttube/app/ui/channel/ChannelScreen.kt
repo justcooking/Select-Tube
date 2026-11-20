@@ -1061,23 +1061,9 @@ private fun ChannelWidescreenVideoItem(
             }
 
             // Duration or Live Badge
-            if (isLiveTab) {
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = Color(0xFFCC0000),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp),
-                ) {
-                    Text(
-                        text = "LIVE",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
-            } else if (video.durationSeconds > 0) {
+            // Ended live streams have durationSeconds > 0 and display their duration like regular videos.
+            // Only active/ongoing live broadcasts without a fixed duration display the red LIVE badge.
+            if (video.durationSeconds > 0) {
                 Surface(
                     shape = RoundedCornerShape(4.dp),
                     color = Color.Black.copy(alpha = 0.85f),
@@ -1087,6 +1073,22 @@ private fun ChannelWidescreenVideoItem(
                 ) {
                     Text(
                         text = formatDuration(video.durationSeconds),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    )
+                }
+            } else if (isLiveTab) {
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color(0xFFCC0000),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp),
+                ) {
+                    Text(
+                        text = "LIVE",
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
