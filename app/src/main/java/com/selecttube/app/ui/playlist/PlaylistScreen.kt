@@ -18,11 +18,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistPlay
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -32,9 +35,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -46,12 +51,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.youtube.VideoFeedItem
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -130,11 +138,61 @@ fun PlaylistScreen(
                             PlaylistHeaderCard(
                                 state = state,
                                 onPlayAll = {
-                                    if (state.videos.isNotEmpty()) {
+                                    if (!state.isAllowed) {
+                                        viewModel.openAddDialog()
+                                    } else if (!state.isActive && state.remainingCountdown != null) {
+                                        // Still cooling down
+                                    } else if (state.videos.isNotEmpty()) {
                                         onVideoClick(state.videos.first())
                                     }
                                 },
                             )
+                        }
+
+                        // Preview Mode Banner (if playlist is not yet curated)
+                        if (!state.isAllowed && state.playlist != null) {
+                            item(key = "preview_card") {
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
+                                    ),
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                            modifier = Modifier.size(28.dp),
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Preview Mode",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                            )
+                                            Text(
+                                                text = "This playlist is not added to your library. You can browse the video list below, but videos cannot be played until added.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Button(
+                                            onClick = { viewModel.openAddDialog() },
+                                        ) {
+                                            Text("Add")
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         // Status Gating: If pending, show countdown message
@@ -197,7 +255,13 @@ fun PlaylistScreen(
                                 PlaylistTrackItem(
                                     index = index + 1,
                                     video = video,
-                                    onClick = { onVideoClick(video) },
+                                    onClick = {
+                                        if (!state.isAllowed) {
+                                            viewModel.openAddDialog()
+                                        } else {
+                                            onVideoClick(video)
+                                        }
+                                    },
                                 )
                                 HorizontalDivider()
                             }
@@ -206,6 +270,65 @@ fun PlaylistScreen(
                 }
             }
         }
+    }
+
+    if (state.showAddDialog) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissAddDialog,
+            title = {
+                Text(if (state.appMode == AppMode.CHILD) "Parent Approval Required" else "Add Playlist?")
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        if (state.appMode == AppMode.CHILD)
+                            "Enter your Parent Master Password to add \"${state.playlist?.name ?: "this playlist"}\" to your library."
+                        else
+                            "Add \"${state.playlist?.name ?: "this playlist"}\" to your curated playlists?"
+                    )
+                    if (state.appMode == AppMode.CHILD) {
+                        OutlinedTextField(
+                            value = state.passwordInput,
+                            onValueChange = viewModel::onPasswordChange,
+                            label = { Text("Parent Password") },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            isError = state.addError != null,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    if (state.addError != null) {
+                        Text(
+                            text = state.addError ?: "",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = viewModel::confirmAddPlaylist,
+                    enabled = !state.isAdding && (state.appMode != AppMode.CHILD || state.passwordInput.isNotBlank()),
+                ) {
+                    if (state.isAdding) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    } else {
+                        Text("Add Playlist")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissAddDialog) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 

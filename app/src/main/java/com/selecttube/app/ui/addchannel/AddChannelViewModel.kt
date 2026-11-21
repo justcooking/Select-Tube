@@ -66,12 +66,12 @@ class AddChannelViewModel @Inject constructor(
 
     private fun loadSetupState() {
         viewModelScope.launch {
-            val count = channelRepository.channelCount()
+            val isConsumed = channelRepository.isFirstSetupConsumed()
             val mode = channelRepository.getAppMode()
             val hasPass = channelRepository.hasPassword()
             _uiState.update {
                 it.copy(
-                    isFirstBatch = count == 0,
+                    isFirstBatch = !isConsumed,
                     appMode = mode,
                     hasPassword = hasPass,
                 )
@@ -227,6 +227,7 @@ class AddChannelViewModel @Inject constructor(
                     )
                 }
                 channelRepository.addChannels(entities)
+                channelRepository.setFirstSetupConsumed(true)
                 _uiState.update { it.copy(isLoading = false, isSuccess = true) }
             } else {
                 // In Child Mode: Parent Master Password is required
@@ -285,6 +286,7 @@ class AddChannelViewModel @Inject constructor(
                     )
                 }
                 channelRepository.addChannels(entities)
+                channelRepository.setFirstSetupConsumed(true)
                 _uiState.update { it.copy(isLoading = false, isSuccess = true) }
             }
         }

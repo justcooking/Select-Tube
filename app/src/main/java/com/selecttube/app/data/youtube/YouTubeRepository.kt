@@ -45,9 +45,16 @@ data class ResolvedPlaylist(
 
 data class ChannelTabResult(
     val items: List<VideoFeedItem>,
+    val playlists: List<ResolvedPlaylist> = emptyList(),
     val hasNextPage: Boolean,
     val nextPage: Page?,
     val tabExtractor: ChannelTabExtractor?,
+)
+
+data class ChannelTabPageResult(
+    val items: List<VideoFeedItem>,
+    val playlists: List<ResolvedPlaylist> = emptyList(),
+    val nextPage: Page?,
 )
 
 class ChannelNotFoundException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -293,23 +300,9 @@ class YouTubeRepository @Inject constructor() {
             }
         }
 
-        // 3. Exact Display Name Match (must not contradict verified ID or handle)
-        if (uploader.normalizedUploaderName.isNotBlank() &&
-            uploader.normalizedUploaderName == profile.normalizedName
-        ) {
-            if (uploader.canonicalId != null && profile.canonicalId.startsWith("UC")) {
-                if (!uploader.canonicalId.equals(profile.canonicalId, ignoreCase = true)) {
-                    return false
-                }
-            }
-            if (uploader.handle != null && !profile.handle.isNullOrBlank()) {
-                if (!uploader.handle.equals(profile.handle, ignoreCase = true)) {
-                    return false
-                }
-            }
-            return true
-        }
-
+        // 3. Fail-Closed Guarantee:
+        // Do NOT match based on display name alone. Display names on YouTube are non-unique
+        // and allow malicious or uncurated channels to collide with allowed channel names.
         return false
     }
 
@@ -495,14 +488,19 @@ class YouTubeRepository @Inject constructor() {
                 fetchPage()
             }
             val page = tabExtractor.initialPage
-            val items = page?.items?.filterIsInstance<StreamInfoItem>()?.map {
+            val rawItems = page?.items.orEmpty()
+            val items = rawItems.filterIsInstance<StreamInfoItem>().map {
                 extractVideoFeedItem(it, canonicalId)
-            } ?: emptyList()
+            }
+            val playlists = rawItems.filterIsInstance<PlaylistInfoItem>().map {
+                extractPlaylistItem(it)
+            }
             val hasNext = page?.hasNextPage() == true
             val nextPage = if (hasNext) page?.nextPage else null
 
             ChannelTabResult(
                 items = items,
+                playlists = playlists,
                 hasNextPage = hasNext,
                 nextPage = nextPage,
                 tabExtractor = tabExtractor,
@@ -510,6 +508,7 @@ class YouTubeRepository @Inject constructor() {
         } catch (e: Exception) {
             ChannelTabResult(
                 items = emptyList(),
+                playlists = emptyList(),
                 hasNextPage = false,
                 nextPage = null,
                 tabExtractor = null,
@@ -518,24 +517,48 @@ class YouTubeRepository @Inject constructor() {
     }
 
     /**
-     * Fetches the next page of videos for continuous infinite scrolling.
+     * Fetches the next page of videos or playlists for continuous infinite scrolling.
      */
     suspend fun fetchChannelTabPage(
         tabExtractor: ChannelTabExtractor,
         page: Page,
         canonicalId: String,
-    ): Pair<List<VideoFeedItem>, Page?> = withContext(Dispatchers.IO) {
+    ): ChannelTabPageResult = withContext(Dispatchers.IO) {
         try {
             val newPage = tabExtractor.getPage(page)
-            val items = newPage?.items?.filterIsInstance<StreamInfoItem>()?.map {
+            val rawItems = newPage?.items.orEmpty()
+            val items = rawItems.filterIsInstance<StreamInfoItem>().map {
                 extractVideoFeedItem(it, canonicalId)
-            } ?: emptyList()
+            }
+            val playlists = rawItems.filterIsInstance<PlaylistInfoItem>().map {
+                extractPlaylistItem(it)
+            }
             val hasNext = newPage?.hasNextPage() == true
             val nextPage = if (hasNext) newPage?.nextPage else null
-            Pair(items, nextPage)
+            ChannelTabPageResult(
+                items = items,
+                playlists = playlists,
+                nextPage = nextPage,
+            )
         } catch (e: Exception) {
-            Pair(emptyList(), null)
+            ChannelTabPageResult(emptyList(), emptyList(), null)
         }
+    }
+
+    private fun extractPlaylistItem(item: PlaylistInfoItem): ResolvedPlaylist {
+        val url = item.url.orEmpty()
+        val id = url.substringAfter("list=").substringBefore("&").ifBlank { url }
+        val thumb = item.thumbnails?.lastOrNull()?.url ?: item.thumbnails?.firstOrNull()?.url
+        return ResolvedPlaylist(
+            playlistId = id,
+            name = item.name.orEmpty(),
+            thumbnailUrl = thumb,
+            uploaderName = item.uploaderName,
+            uploaderUrl = item.uploaderUrl,
+            videoCount = item.streamCount,
+            description = item.description?.content,
+            url = url,
+        )
     }
 
     private fun extractVideoFeedItem(item: StreamInfoItem, fallbackChannelId: String): VideoFeedItem {

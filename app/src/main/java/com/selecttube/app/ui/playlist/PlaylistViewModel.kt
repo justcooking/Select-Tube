@@ -3,10 +3,14 @@ package com.selecttube.app.ui.playlist
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.selecttube.app.config.ChannelConfig
+import com.selecttube.app.data.db.PlaylistEntity
+import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.repository.ChannelRepository
 import com.selecttube.app.data.youtube.ResolvedPlaylist
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.data.youtube.YouTubeRepository
+import com.selecttube.app.util.PasswordSecurity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +32,11 @@ data class PlaylistUiState(
     val isAllowed: Boolean = false,
     val isActive: Boolean = false,
     val remainingCountdown: String? = null,
+    val appMode: AppMode = AppMode.ADULT,
+    val showAddDialog: Boolean = false,
+    val passwordInput: String = "",
+    val addError: String? = null,
+    val isAdding: Boolean = false,
     val error: String? = null,
 )
 
@@ -64,7 +73,16 @@ class PlaylistViewModel @Inject constructor(
 
     init {
         observePlaylistCuration()
+        observeAppMode()
         loadPlaylist(isRefresh = false)
+    }
+
+    private fun observeAppMode() {
+        viewModelScope.launch {
+            channelRepository.appMode.collect { mode ->
+                _uiState.update { it.copy(appMode = mode) }
+            }
+        }
     }
 
     private fun observePlaylistCuration() {
@@ -123,6 +141,75 @@ class PlaylistViewModel @Inject constructor(
                         isLoading = false,
                         isRefreshing = false,
                         error = "Failed to load playlist: ${e.message ?: "Network error"}",
+                    )
+                }
+            }
+        }
+    }
+
+    fun openAddDialog() {
+        _uiState.update { it.copy(showAddDialog = true, passwordInput = "", addError = null) }
+    }
+
+    fun dismissAddDialog() {
+        _uiState.update { it.copy(showAddDialog = false, addError = null) }
+    }
+
+    fun onPasswordChange(input: String) {
+        _uiState.update { it.copy(passwordInput = input, addError = null) }
+    }
+
+    fun confirmAddPlaylist() {
+        val state = _uiState.value
+        val playlist = state.playlist ?: return
+
+        viewModelScope.launch {
+            _uiState.update { it.copy(isAdding = true, addError = null) }
+
+            if (state.appMode == AppMode.CHILD) {
+                val stored = channelRepository.getPasswordHash()
+                if (stored == null || !PasswordSecurity.verify(state.passwordInput, stored)) {
+                    _uiState.update {
+                        it.copy(
+                            isAdding = false,
+                            addError = "Incorrect parent password. Please re-enter.",
+                        )
+                    }
+                    return@launch
+                }
+            }
+
+            try {
+                val now = System.currentTimeMillis()
+                val activationTime = if (state.appMode == AppMode.ADULT) {
+                    now + ChannelConfig.ACTIVATION_DELAY_MS
+                } else {
+                    null // Activated immediately upon parent entry in Child Mode
+                }
+
+                val entity = PlaylistEntity(
+                    playlistId = playlist.playlistId,
+                    name = playlist.name,
+                    thumbnailUrl = playlist.thumbnailUrl,
+                    uploaderName = playlist.uploaderName,
+                    videoCount = playlist.videoCount,
+                    activationTimestamp = activationTime,
+                    addedAt = now,
+                )
+
+                channelRepository.addPlaylist(entity)
+                _uiState.update {
+                    it.copy(
+                        isAdding = false,
+                        showAddDialog = false,
+                        addError = null,
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isAdding = false,
+                        addError = "Failed to add playlist: ${e.message}",
                     )
                 }
             }

@@ -18,6 +18,7 @@ okhttp                 = "4.12.0"
 desugarJdkLibs         = "2.1.5"
 media3                 = "1.4.1"
 coil                   = "2.7.0"
+junit                  = "4.13.2"
 
 [libraries]
 # Core
@@ -65,6 +66,9 @@ media3-ui                          = { group = "androidx.media3",        name = 
 media3-session                     = { group = "androidx.media3",        name = "media3-session",              version.ref = "media3" }
 # Coil (image loading)
 coil-compose                       = { group = "io.coil-kt",             name = "coil-compose",                version.ref = "coil" }
+# Testing
+junit                              = { group = "junit",                  name = "junit",                       version.ref = "junit" }
+kotlinx-coroutines-test            = { group = "org.jetbrains.kotlinx",  name = "kotlinx-coroutines-test",     version.ref = "coroutines" }
 
 [plugins]
 android-application = { id = "com.android.application",            version.ref = "agp" }

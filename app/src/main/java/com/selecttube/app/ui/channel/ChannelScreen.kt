@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayCircleOutline
+import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
@@ -82,6 +83,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.selecttube.app.data.youtube.ResolvedPlaylist
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.ui.theme.Brand500
 import com.selecttube.app.ui.theme.Brand700
@@ -99,6 +101,7 @@ private val YouTubeBorderColor = Color(0xFF26334D)
 fun ChannelScreen(
     onNavigateBack: () -> Unit,
     onVideoClick: (VideoFeedItem) -> Unit,
+    onPlaylistClick: (ResolvedPlaylist) -> Unit = {},
     viewModel: ChannelViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -704,7 +707,8 @@ fun ChannelScreen(
                                             CircularProgressIndicator(color = Brand500)
                                         }
                                     }
-                                } else if (state.videos.isEmpty()) {
+                                } else if ((state.selectedCategory == ChannelCategory.PLAYLISTS && state.playlists.isEmpty()) ||
+                                           (state.selectedCategory != ChannelCategory.PLAYLISTS && state.videos.isEmpty())) {
                                     item(key = "tab_empty") {
                                         Box(
                                             modifier = Modifier
@@ -721,6 +725,23 @@ fun ChannelScreen(
                                     }
                                 } else {
                                     when (state.selectedCategory) {
+                                        // -------------------------------------------------------------
+                                        // PLAYLISTS TAB: Render in rich YouTube playlist cards!
+                                        // -------------------------------------------------------------
+                                        ChannelCategory.PLAYLISTS -> {
+                                            item(key = "playlists_top_spacing") {
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                            }
+
+                                            items(state.playlists, key = { "pl_${it.playlistId}" }) { playlist ->
+                                                ChannelPlaylistItem(
+                                                    playlist = playlist,
+                                                    onClick = { onPlaylistClick(playlist) },
+                                                )
+                                                HorizontalDivider(color = YouTubeBorderColor, thickness = 0.5.dp)
+                                            }
+                                        }
+
                                         // -------------------------------------------------------------
                                         // SHORTS TAB: Render in native 2-column vertical 9:16 grid!
                                         // -------------------------------------------------------------
@@ -1130,5 +1151,106 @@ private fun formatDuration(seconds: Long): String {
         String.format(Locale.US, "%d:%02d:%02d", h, m, s)
     } else {
         String.format(Locale.US, "%d:%02d", m, s)
+    }
+}
+
+@Composable
+private fun ChannelPlaylistItem(
+    playlist: ResolvedPlaylist,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // 16:9 Thumbnail with Playlist Overlay
+        Box(
+            modifier = Modifier
+                .width(130.dp)
+                .aspectRatio(16f / 9f)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color.Black),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!playlist.thumbnailUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = playlist.thumbnailUrl,
+                    contentDescription = playlist.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.PlaylistPlay,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+
+            // Bottom-right video count badge
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = Color.Black.copy(alpha = 0.8f),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(4.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlaylistPlay,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text(
+                        text = "${playlist.videoCount}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.width(12.dp))
+
+        // Playlist Details
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = playlist.name,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = "${playlist.uploaderName ?: "Playlist"} • ${playlist.videoCount} videos",
+                style = MaterialTheme.typography.bodySmall,
+                color = YouTubeSecondaryText,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+
+            Text(
+                text = "View playlist",
+                style = MaterialTheme.typography.labelSmall,
+                color = Brand500,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
     }
 }

@@ -36,6 +36,13 @@ class ChannelRepository @Inject constructor(
 
     suspend fun isOnboardingCompleted(): Boolean = prefs.onboardingCompleted.first()
 
+    /** Whether first-setup immediate activation has been consumed. */
+    val firstSetupConsumed: Flow<Boolean> = prefs.firstSetupConsumed
+
+    suspend fun setFirstSetupConsumed(consumed: Boolean) = prefs.setFirstSetupConsumed(consumed)
+
+    suspend fun isFirstSetupConsumed(): Boolean = prefs.firstSetupConsumed.first()
+
     /** Active app mode (ADULT vs CHILD). */
     val appMode: Flow<AppMode> = prefs.appMode
 
@@ -64,6 +71,13 @@ class ChannelRepository @Inject constructor(
 
     val parentalDailyLimitMinutes: Flow<Int> = prefs.parentalDailyLimitMinutes
     suspend fun setParentalDailyLimitMinutes(minutes: Int) = prefs.setParentalDailyLimitMinutes(minutes)
+
+    val dailyWatchSeconds: Flow<Int> = prefs.dailyWatchSeconds
+    val dailyWatchDate: Flow<String?> = prefs.dailyWatchDate
+    suspend fun recordWatchSeconds(additionalSeconds: Int, todayDate: String) =
+        prefs.recordWatchSeconds(additionalSeconds, todayDate)
+    suspend fun resetDailyWatchSeconds(todayDate: String) =
+        prefs.resetDailyWatchSeconds(todayDate)
 
     val parentalBedtimeEnabled: Flow<Boolean> = prefs.parentalBedtimeEnabled
     suspend fun setParentalBedtimeEnabled(enabled: Boolean) = prefs.setParentalBedtimeEnabled(enabled)

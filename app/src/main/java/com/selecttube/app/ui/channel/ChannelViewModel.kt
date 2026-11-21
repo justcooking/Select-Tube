@@ -9,6 +9,7 @@ import com.selecttube.app.config.ChannelConfig
 import com.selecttube.app.data.db.ChannelEntity
 import com.selecttube.app.data.repository.ChannelRepository
 import com.selecttube.app.data.youtube.ResolvedChannel
+import com.selecttube.app.data.youtube.ResolvedPlaylist
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.data.youtube.YouTubeRepository
 import com.selecttube.app.domain.Channel
@@ -35,6 +36,7 @@ enum class ChannelCategory(val label: String, val tabKey: String) {
     VIDEOS("Videos", ChannelTabs.VIDEOS),
     SHORTS("Shorts", ChannelTabs.SHORTS),
     LIVESTREAMS("Live", ChannelTabs.LIVESTREAMS),
+    PLAYLISTS("Playlists", ChannelTabs.PLAYLISTS),
 }
 
 data class ChannelUiState(
@@ -45,6 +47,7 @@ data class ChannelUiState(
     val availableCategories: List<ChannelCategory> = ChannelCategory.entries,
     val isShortsDisabled: Boolean = false,
     val videos: List<VideoFeedItem> = emptyList(),
+    val playlists: List<ResolvedPlaylist> = emptyList(),
     val isLoadingTab: Boolean = false,
     val isLoadingMore: Boolean = false,
     val hasNextPage: Boolean = false,
@@ -273,7 +276,7 @@ class ChannelViewModel @Inject constructor(
     }
 
     fun onCategorySelected(category: ChannelCategory) {
-        if (_uiState.value.selectedCategory == category && _uiState.value.videos.isNotEmpty()) return
+        if (_uiState.value.selectedCategory == category && (_uiState.value.videos.isNotEmpty() || _uiState.value.playlists.isNotEmpty())) return
         _uiState.update { it.copy(selectedCategory = category) }
 
         if (_uiState.value.isAllowed && _uiState.value.isActive) {
@@ -292,6 +295,7 @@ class ChannelViewModel @Inject constructor(
                     isLoadingTab = !isRefresh,
                     isRefreshing = isRefresh,
                     videos = if (!isRefresh) emptyList() else it.videos,
+                    playlists = if (!isRefresh) emptyList() else it.playlists,
                 )
             }
 
@@ -302,6 +306,7 @@ class ChannelViewModel @Inject constructor(
             _uiState.update {
                 it.copy(
                     videos = result.items,
+                    playlists = result.playlists,
                     hasNextPage = result.hasNextPage,
                     isLoadingTab = false,
                     isRefreshing = false,
@@ -321,19 +326,21 @@ class ChannelViewModel @Inject constructor(
         viewModelScope.launch {
             _uiState.update { it.copy(isLoadingMore = true) }
 
-            val (newItems, updatedNextPage) = youTubeRepository.fetchChannelTabPage(
+            val pageResult = youTubeRepository.fetchChannelTabPage(
                 tabExtractor = extractor,
                 page = currentNext,
                 canonicalId = targetId,
             )
 
-            nextPage = updatedNextPage
-            val hasNext = updatedNextPage != null
+            nextPage = pageResult.nextPage
+            val hasNext = pageResult.nextPage != null
 
             _uiState.update {
-                val combined = (it.videos + newItems).distinctBy { v -> v.url.ifBlank { v.videoId } }
+                val combinedVideos = (it.videos + pageResult.items).distinctBy { v -> v.url.ifBlank { v.videoId } }
+                val combinedPlaylists = (it.playlists + pageResult.playlists).distinctBy { p -> p.playlistId }
                 it.copy(
-                    videos = combined,
+                    videos = combinedVideos,
+                    playlists = combinedPlaylists,
                     hasNextPage = hasNext,
                     isLoadingMore = false,
                 )
@@ -353,9 +360,9 @@ class ChannelViewModel @Inject constructor(
             val appMode = channelRepository.getAppMode()
             if (appMode == AppMode.ADULT) {
                 // In Adult Mode: No password needed!
-                val count = channelRepository.channelCount()
+                val isConsumed = channelRepository.isFirstSetupConsumed()
                 val now = System.currentTimeMillis()
-                val activationTime = if (count == 0) null else (now + ChannelConfig.ACTIVATION_DELAY_MS)
+                val activationTime = if (!isConsumed) null else (now + ChannelConfig.ACTIVATION_DELAY_MS)
                 val state = _uiState.value
                 val channel = state.channel
                 val targetId = channel?.channelId?.ifBlank { canonicalChannelId ?: channelIdParam }
@@ -370,6 +377,9 @@ class ChannelViewModel @Inject constructor(
                     addedAt = now,
                 )
                 channelRepository.addChannel(entity)
+                if (!isConsumed) {
+                    channelRepository.setFirstSetupConsumed(true)
+                }
             } else {
                 // In Child Mode: Parent Master Password is required
                 val hasPassword = channelRepository.hasPassword()

@@ -233,7 +233,7 @@ fun FeedScreen(
                             else -> {
                                 LazyColumn(
                                     modifier = Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(bottom = 16.dp),
+                                    contentPadding = PaddingValues(bottom = 80.dp),
                                 ) {
                                     if (state.channelErrors.isNotEmpty()) {
                                         item(key = "feed_errors") {
@@ -370,7 +370,7 @@ private fun PlaylistsFeedView(
     } else {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 80.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             items(playlists, key = { it.playlistId }) { playlist ->

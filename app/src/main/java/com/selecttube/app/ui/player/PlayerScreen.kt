@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
@@ -1769,6 +1770,41 @@ fun PlayerScreen(
             text = {
                 Text(
                     "It's bedtime! 🌙 Playback is locked until morning to ensure healthy rest.\n\nA parent can unlock playback if needed.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.requestParentalUnlock() }) {
+                    Text("Parent Unlock")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    viewModel.stop()
+                    onNavigateBack()
+                }) {
+                    Text("Close")
+                }
+            },
+        )
+    }
+
+    // ── Daily Screen Time restriction dialog ───────────────────────────────────
+    if (parentalRestriction.isScreenTimeRestricted) {
+        AlertDialog(
+            onDismissRequest = { /* Modal: require action */ },
+            icon = {
+                Icon(
+                    Icons.Default.HourglassTop,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp),
+                )
+            },
+            title = { Text("Daily Limit Reached") },
+            text = {
+                Text(
+                    "You've reached your daily screen time limit! ⏳ Take a break and explore other activities.\n\nA parent can unlock playback if needed.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             },

@@ -8,13 +8,17 @@ import com.selecttube.app.data.repository.WatchHistoryRepository
 import com.selecttube.app.playback.PlayerManager
 import com.selecttube.app.util.PasswordSecurity
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 
 data class ParentalPlaybackRestriction(
@@ -60,32 +64,45 @@ class PlayerViewModel @Inject constructor(
                 }
             }
         }
+        // Active monitoring loop for Bedtime schedule and Daily Screen Time limits
         viewModelScope.launch {
-            combine(
-                channelRepository.appMode,
-                channelRepository.parentalBedtimeEnabled,
-                channelRepository.parentalBedtimeStartHour,
-                channelRepository.parentalBedtimeEndHour,
-            ) { mode, bedtimeEnabled, startHour, endHour ->
-                if (mode == AppMode.CHILD && bedtimeEnabled) {
-                    val cal = Calendar.getInstance()
-                    val hour = cal.get(Calendar.HOUR_OF_DAY)
+            while (true) {
+                delay(5000L)
+                val mode = channelRepository.getAppMode()
+                if (mode != AppMode.CHILD) continue
+
+                // 1. Bedtime schedule enforcement (evaluated continuously against the clock)
+                val bedtimeEnabled = channelRepository.parentalBedtimeEnabled.first()
+                if (bedtimeEnabled && !_parentalRestriction.value.isBedtimeRestricted) {
+                    val startHour = channelRepository.parentalBedtimeStartHour.first()
+                    val endHour = channelRepository.parentalBedtimeEndHour.first()
+                    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
                     val isBedtime = if (startHour > endHour) {
                         hour >= startHour || hour < endHour
                     } else {
                         hour in startHour until endHour
                     }
-                    isBedtime
-                } else {
-                    false
-                }
-            }.collect { isRestricted ->
-                if (isRestricted && !_parentalRestriction.value.isBedtimeRestricted) {
-                    if (player.isPlaying) {
-                        player.pause()
+                    if (isBedtime) {
+                        if (player.isPlaying) {
+                            player.pause()
+                        }
+                        _parentalRestriction.update { it.copy(isBedtimeRestricted = true) }
                     }
                 }
-                _parentalRestriction.update { it.copy(isBedtimeRestricted = isRestricted) }
+
+                // 2. Daily screen time limit enforcement & accumulator
+                val dailyLimitMin = channelRepository.parentalDailyLimitMinutes.first()
+                if (dailyLimitMin > 0) {
+                    val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                    val additional = if (player.isPlaying) 5 else 0
+                    val totalSec = channelRepository.recordWatchSeconds(additional, today)
+                    if (totalSec >= dailyLimitMin * 60 && !_parentalRestriction.value.isScreenTimeRestricted) {
+                        if (player.isPlaying) {
+                            player.pause()
+                        }
+                        _parentalRestriction.update { it.copy(isScreenTimeRestricted = true) }
+                    }
+                }
             }
         }
     }
@@ -109,6 +126,8 @@ class PlayerViewModel @Inject constructor(
             val pass = _parentalRestriction.value.unlockPasswordInput
             val stored = channelRepository.getPasswordHash()
             if (stored != null && PasswordSecurity.verify(pass, stored)) {
+                val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                channelRepository.resetDailyWatchSeconds(today)
                 _parentalRestriction.update {
                     it.copy(
                         isBedtimeRestricted = false,
@@ -138,8 +157,37 @@ class PlayerViewModel @Inject constructor(
         thumbnailUrl: String? = null,
         startPositionMs: Long = 0L,
     ) {
-        _isPlayerExpanded.value = true
-        playerManager.playVideo(urlOrId, title, channelName, thumbnailUrl, startPositionMs)
+        viewModelScope.launch {
+            val mode = channelRepository.getAppMode()
+            if (mode == AppMode.CHILD) {
+                val bedtimeEnabled = channelRepository.parentalBedtimeEnabled.first()
+                if (bedtimeEnabled) {
+                    val startHour = channelRepository.parentalBedtimeStartHour.first()
+                    val endHour = channelRepository.parentalBedtimeEndHour.first()
+                    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                    val isBedtime = if (startHour > endHour) hour >= startHour || hour < endHour else hour in startHour until endHour
+                    if (isBedtime) {
+                        _parentalRestriction.update { it.copy(isBedtimeRestricted = true) }
+                        _isPlayerExpanded.value = true
+                        return@launch
+                    }
+                }
+
+                val dailyLimitMin = channelRepository.parentalDailyLimitMinutes.first()
+                if (dailyLimitMin > 0) {
+                    val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+                    val currentSec = channelRepository.recordWatchSeconds(0, today)
+                    if (currentSec >= dailyLimitMin * 60) {
+                        _parentalRestriction.update { it.copy(isScreenTimeRestricted = true) }
+                        _isPlayerExpanded.value = true
+                        return@launch
+                    }
+                }
+            }
+
+            _isPlayerExpanded.value = true
+            playerManager.playVideo(urlOrId, title, channelName, thumbnailUrl, startPositionMs)
+        }
     }
 
     fun togglePlayPause() {

@@ -1,26 +1,40 @@
 package com.selecttube.app
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import com.selecttube.app.deeplink.DeepLinkManager
 import com.selecttube.app.ui.navigation.AppNavigation
 import com.selecttube.app.ui.theme.SelectTubeTheme
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject
+    lateinit var deepLinkManager: DeepLinkManager
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableHighRefreshRate()
         enableEdgeToEdge()
+        deepLinkManager.handleIntent(intent)
         setContent {
             SelectTubeTheme {
                 AppNavigation()
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        deepLinkManager.handleIntent(intent)
     }
 
     /**

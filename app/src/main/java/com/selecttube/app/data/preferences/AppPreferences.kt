@@ -37,10 +37,13 @@ class AppPreferences @Inject constructor(
     private companion object {
         val KEY_PASSWORD_HASH = stringPreferencesKey("password_hash")
         val KEY_ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+        val KEY_FIRST_SETUP_CONSUMED = booleanPreferencesKey("first_setup_consumed")
         val KEY_APP_MODE = stringPreferencesKey("app_mode")
         val KEY_PARENTAL_SHORTS_DISABLED = booleanPreferencesKey("parental_shorts_disabled")
         val KEY_PARENTAL_SEARCH_DISABLED = booleanPreferencesKey("parental_search_disabled")
         val KEY_PARENTAL_DAILY_LIMIT_MINUTES = intPreferencesKey("parental_daily_limit_minutes")
+        val KEY_DAILY_WATCH_SECONDS = intPreferencesKey("daily_watch_seconds")
+        val KEY_DAILY_WATCH_DATE = stringPreferencesKey("daily_watch_date")
         val KEY_PARENTAL_BEDTIME_ENABLED = booleanPreferencesKey("parental_bedtime_enabled")
         val KEY_PARENTAL_BEDTIME_START_HOUR = intPreferencesKey("parental_bedtime_start_hour")
         val KEY_PARENTAL_BEDTIME_END_HOUR = intPreferencesKey("parental_bedtime_end_hour")
@@ -52,6 +55,14 @@ class AppPreferences @Inject constructor(
 
     suspend fun setOnboardingCompleted(completed: Boolean) {
         context.dataStore.edit { it[KEY_ONBOARDING_COMPLETED] = completed }
+    }
+
+    /** Emits whether the first-time setup exemption has been consumed. */
+    val firstSetupConsumed: Flow<Boolean> = context.dataStore.data
+        .map { prefs -> prefs[KEY_FIRST_SETUP_CONSUMED] ?: false }
+
+    suspend fun setFirstSetupConsumed(consumed: Boolean) {
+        context.dataStore.edit { it[KEY_FIRST_SETUP_CONSUMED] = consumed }
     }
 
     /** Emits the active AppMode (defaults to ADULT). */
@@ -105,6 +116,42 @@ class AppPreferences @Inject constructor(
 
     suspend fun setParentalDailyLimitMinutes(minutes: Int) {
         context.dataStore.edit { it[KEY_PARENTAL_DAILY_LIMIT_MINUTES] = minutes }
+    }
+
+    /** Emits accumulated watch seconds for today. */
+    val dailyWatchSeconds: Flow<Int> = context.dataStore.data
+        .map { prefs -> prefs[KEY_DAILY_WATCH_SECONDS] ?: 0 }
+
+    /** Emits the recorded date string ("yyyy-MM-dd") for accumulated watch seconds. */
+    val dailyWatchDate: Flow<String?> = context.dataStore.data
+        .map { prefs -> prefs[KEY_DAILY_WATCH_DATE] }
+
+    /**
+     * Accumulates watch seconds for today's date.
+     * If the date has changed since the last recording, resets counter and starts fresh.
+     * Returns the updated total watch seconds for today.
+     */
+    suspend fun recordWatchSeconds(additionalSeconds: Int, todayDate: String): Int {
+        var updatedSeconds = 0
+        context.dataStore.edit { prefs ->
+            val recordedDate = prefs[KEY_DAILY_WATCH_DATE]
+            val current = if (recordedDate == todayDate) {
+                prefs[KEY_DAILY_WATCH_SECONDS] ?: 0
+            } else {
+                0
+            }
+            updatedSeconds = current + additionalSeconds
+            prefs[KEY_DAILY_WATCH_DATE] = todayDate
+            prefs[KEY_DAILY_WATCH_SECONDS] = updatedSeconds
+        }
+        return updatedSeconds
+    }
+
+    suspend fun resetDailyWatchSeconds(todayDate: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_DAILY_WATCH_DATE] = todayDate
+            prefs[KEY_DAILY_WATCH_SECONDS] = 0
+        }
     }
 
     /** Bedtime restriction toggle. */
