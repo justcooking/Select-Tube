@@ -1,20 +1,25 @@
 package com.selecttube.app.ui.settings
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -25,6 +30,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Person
@@ -42,6 +48,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -108,6 +116,14 @@ fun SettingsScreen(
         }
     }
 
+    UpdateDialog(
+        state = updateState,
+        onDismiss = viewModel::dismissUpdate,
+        onDownload = viewModel::downloadUpdate,
+        onInstall = viewModel::installUpdate,
+        onRetry = viewModel::retryUpdate,
+    )
+
     // ── 1. Full Screen Parent Gate in Child Mode when locked ──────────────────
     if (uiState.appMode == AppMode.CHILD && !uiState.isParentUnlocked) {
         Scaffold(
@@ -125,6 +141,13 @@ fun SettingsScreen(
                         titleContentColor = MaterialTheme.colorScheme.onBackground,
                         navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
                     ),
+                )
+            },
+            bottomBar = {
+                AppInfoSection(
+                    versionName = viewModel.currentVersion,
+                    updateState = updateState,
+                    onCheckForUpdates = { viewModel.checkForUpdates() },
                 )
             },
         ) { innerPadding ->
@@ -247,6 +270,13 @@ fun SettingsScreen(
                 ),
             )
         },
+        bottomBar = {
+            AppInfoSection(
+                versionName = viewModel.currentVersion,
+                updateState = updateState,
+                onCheckForUpdates = { viewModel.checkForUpdates() },
+            )
+        },
         floatingActionButton = {
             var showAddMenu by remember { mutableStateOf(false) }
 
@@ -309,53 +339,55 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // ── Filter Tabs: All vs Channels vs Playlists ────────────────────
-            item(key = "curation_tabs") {
+            // ── Curation Filter Chips ─────────────────────────────────────────
+            item(key = "curation_chips") {
                 val pendingPlaylistsCount = uiState.playlists.count { !it.isActive }
                 val pendingChannelsCount = uiState.channels.count { !it.isActive }
-                TabRow(
-                    selectedTabIndex = selectedTab,
-                    containerColor = MaterialTheme.colorScheme.background,
+                val totalPending = pendingPlaylistsCount + pendingChannelsCount
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Tab(
+                    FilterChip(
                         selected = selectedTab == 0,
                         onClick = { selectedTab = 0 },
-                        text = { Text("All (${uiState.channels.size + uiState.playlists.size})") },
+                        label = { Text("All (${uiState.channels.size + uiState.playlists.size})") },
                     )
-                    Tab(
+                    FilterChip(
                         selected = selectedTab == 1,
                         onClick = { selectedTab = 1 },
-                        text = {
-                            Text(
-                                if (pendingChannelsCount > 0) {
-                                    "Channels (${uiState.channels.size} • $pendingChannelsCount ⏳)"
-                                } else {
-                                    "Channels (${uiState.channels.size})"
-                                }
-                            )
-                        },
+                        label = { Text("Channels (${uiState.channels.size})") },
                     )
-                    Tab(
+                    FilterChip(
                         selected = selectedTab == 2,
                         onClick = { selectedTab = 2 },
-                        text = {
-                            Text(
-                                if (pendingPlaylistsCount > 0) {
-                                    "Playlists (${uiState.playlists.size} • $pendingPlaylistsCount ⏳)"
-                                } else {
-                                    "Playlists (${uiState.playlists.size})"
-                                }
-                            )
-                        },
+                        label = { Text("Playlists (${uiState.playlists.size})") },
                     )
+                    if (totalPending > 0) {
+                        FilterChip(
+                            selected = selectedTab == 3,
+                            onClick = { selectedTab = 3 },
+                            label = { Text("⏳ Pending ($totalPending)") },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                            ),
+                        )
+                    }
                 }
-                HorizontalDivider()
+                HorizontalDivider(modifier = Modifier.padding(top = 4.dp))
             }
 
-            // ── Top Pending Activation Section (Shown on All tab if any pending) ──
+            // ── Top Pending Activation Section ──
             val pendingChannels = uiState.channels.filter { !it.isActive }
             val pendingPlaylists = uiState.playlists.filter { !it.isActive }
-            if (selectedTab == 0 && (pendingChannels.isNotEmpty() || pendingPlaylists.isNotEmpty())) {
+            val showPendingSection = (selectedTab == 0 || selectedTab == 3) && (pendingChannels.isNotEmpty() || pendingPlaylists.isNotEmpty())
+
+            if (showPendingSection) {
                 item(key = "pending_activation_header") {
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(
@@ -365,7 +397,7 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
-                            Icons.Default.Timer,
+                            Icons.Default.HourglassTop,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.size(20.dp),
@@ -397,6 +429,24 @@ fun SettingsScreen(
                         onCancelPending = { viewModel.cancelPendingPlaylist(playlist.playlistId) },
                     )
                     HorizontalDivider()
+                }
+            }
+
+            if (selectedTab == 3 && pendingChannels.isEmpty() && pendingPlaylists.isEmpty()) {
+                item(key = "pending_none_state") {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 32.dp, vertical = 32.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "No pending additions. All channels and playlists are active!",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
                 }
             }
 
@@ -515,25 +565,8 @@ fun SettingsScreen(
                     }
                 }
             }
-
-            // ── App Information & Updates Section ──────────────────────────────────
-            item(key = "app_info_card") {
-                AppInfoSection(
-                    versionName = viewModel.currentVersion,
-                    updateState = updateState,
-                    onCheckForUpdates = { viewModel.checkForUpdates() },
-                )
-            }
         }
     }
-
-    UpdateDialog(
-        state = updateState,
-        onDismiss = viewModel::dismissUpdate,
-        onDownload = viewModel::downloadUpdate,
-        onInstall = viewModel::installUpdate,
-        onRetry = viewModel::retryUpdate,
-    )
 
     // ── Remove channel confirmation dialog ───────────────────────────────────
     channelToRemove?.let { channel ->
@@ -745,31 +778,39 @@ private fun ModeSection(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
 
-                ControlToggleItem(
-                    icon = Icons.Default.SmartDisplay,
-                    title = "Block Shorts",
-                    subtitle = "Completely hides YouTube Shorts across all channels",
-                    checked = uiState.parentalShortsDisabled,
-                    onCheckedChange = onToggleShorts,
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ControlToggleItem(
+                        icon = Icons.Default.SmartDisplay,
+                        title = "Block Shorts",
+                        subtitle = "Completely hides YouTube Shorts across all channels",
+                        checked = uiState.parentalShortsDisabled,
+                        onCheckedChange = onToggleShorts,
+                        iconBackgroundColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
+                        iconColor = MaterialTheme.colorScheme.error,
+                    )
 
-                ControlToggleItem(
-                    icon = Icons.Default.Bedtime,
-                    title = "Bedtime Schedule",
-                    subtitle = "Pauses playback between 9:00 PM and 7:00 AM",
-                    checked = uiState.parentalBedtimeEnabled,
-                    onCheckedChange = onToggleBedtime,
-                )
+                    ControlToggleItem(
+                        icon = Icons.Default.Bedtime,
+                        title = "Bedtime Schedule",
+                        subtitle = "Pauses playback between 9:00 PM and 7:00 AM",
+                        checked = uiState.parentalBedtimeEnabled,
+                        onCheckedChange = onToggleBedtime,
+                        iconBackgroundColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                        iconColor = MaterialTheme.colorScheme.primary,
+                    )
 
-                ControlToggleItem(
-                    icon = Icons.Default.Timer,
-                    title = "Daily Limit (60 min)",
-                    subtitle = if (uiState.parentalDailyLimitMinutes > 0) "Limit playback to 60 minutes per day" else "No daily limit",
-                    checked = uiState.parentalDailyLimitMinutes > 0,
-                    onCheckedChange = onToggleDailyLimit,
-                )
+                    ControlToggleItem(
+                        icon = Icons.Default.Timer,
+                        title = "Daily Limit (60 min)",
+                        subtitle = if (uiState.parentalDailyLimitMinutes > 0) "Limit playback to 60 minutes per day" else "No daily limit",
+                        checked = uiState.parentalDailyLimitMinutes > 0,
+                        onCheckedChange = onToggleDailyLimit,
+                        iconBackgroundColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                        iconColor = MaterialTheme.colorScheme.secondary,
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(10.dp))
                 OutlinedButton(
@@ -792,42 +833,62 @@ private fun ControlToggleItem(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    iconBackgroundColor: Color = MaterialTheme.colorScheme.primaryContainer,
+    iconColor: Color = MaterialTheme.colorScheme.primary,
 ) {
-    Row(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+            .clip(RoundedCornerShape(12.dp))
+            .clickable { onCheckedChange(!checked) },
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        shape = RoundedCornerShape(12.dp),
     ) {
         Row(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Column {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(iconBackgroundColor),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = iconColor,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
+            Spacer(modifier = Modifier.width(8.dp))
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+            )
         }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-        )
     }
 }
 
@@ -844,26 +905,39 @@ private fun ChannelItem(
             containerColor = MaterialTheme.colorScheme.background,
             headlineColor = MaterialTheme.colorScheme.onBackground,
         ),
-        headlineContent = { Text(channel.name) },
+        headlineContent = {
+            Text(
+                text = channel.name,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
         supportingContent = {
             if (!channel.isActive && channel.remainingTimeFormatted != null) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(top = 2.dp),
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier.padding(top = 4.dp),
                 ) {
-                    Icon(
-                        Icons.Default.Timer,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = MaterialTheme.colorScheme.secondary,
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = channel.remainingTimeFormatted,
-                        color = MaterialTheme.colorScheme.secondary,
-                        style = MaterialTheme.typography.bodySmall,
-                        fontWeight = FontWeight.Medium,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Icon(
+                            Icons.Default.HourglassTop,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.secondary,
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Unlocks in ${channel.remainingTimeFormatted}",
+                            color = MaterialTheme.colorScheme.secondary,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
                 }
             }
         },
@@ -872,15 +946,26 @@ private fun ChannelItem(
                 AsyncImage(
                     model = channel.thumbnailUrl,
                     contentDescription = channel.name,
-                    modifier = Modifier.size(48.dp),
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape),
                 )
             } else {
-                Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Person,
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         },
         trailingContent = {
@@ -889,6 +974,7 @@ private fun ChannelItem(
                     StatusBadge(
                         label = "Active",
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                     IconButton(onClick = onRemove) {
                         Icon(
@@ -901,6 +987,7 @@ private fun ChannelItem(
                     StatusBadge(
                         label = "Pending",
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
                     IconButton(onClick = onCancelPending) {
                         Icon(
@@ -926,7 +1013,14 @@ private fun PlaylistItem(
             containerColor = MaterialTheme.colorScheme.background,
             headlineColor = MaterialTheme.colorScheme.onBackground,
         ),
-        headlineContent = { Text(playlist.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        headlineContent = {
+            Text(
+                text = playlist.name,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
         supportingContent = {
             Column {
                 Text(
@@ -935,23 +1029,29 @@ private fun PlaylistItem(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (!playlist.isActive && playlist.remainingTimeFormatted != null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 2.dp),
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.padding(top = 4.dp),
                     ) {
-                        Icon(
-                            Icons.Default.Timer,
-                            contentDescription = null,
-                            modifier = Modifier.size(14.dp),
-                            tint = MaterialTheme.colorScheme.secondary,
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = playlist.remainingTimeFormatted,
-                            color = MaterialTheme.colorScheme.secondary,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Medium,
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        ) {
+                            Icon(
+                                Icons.Default.HourglassTop,
+                                contentDescription = null,
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.secondary,
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Unlocks in ${playlist.remainingTimeFormatted}",
+                                color = MaterialTheme.colorScheme.secondary,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
                     }
                 }
             }
@@ -959,9 +1059,9 @@ private fun PlaylistItem(
         leadingContent = {
             Box(
                 modifier = Modifier
-                    .size(width = 64.dp, height = 36.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color.Black),
+                    .size(width = 64.dp, height = 40.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center,
             ) {
                 if (playlist.thumbnailUrl != null) {
@@ -975,7 +1075,7 @@ private fun PlaylistItem(
                     Icon(
                         imageVector = Icons.Default.PlaylistPlay,
                         contentDescription = null,
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -986,6 +1086,7 @@ private fun PlaylistItem(
                     StatusBadge(
                         label = "Active",
                         containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                     IconButton(onClick = onRemove) {
                         Icon(
@@ -998,6 +1099,7 @@ private fun PlaylistItem(
                     StatusBadge(
                         label = "Pending",
                         containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
                     IconButton(onClick = onCancelPending) {
                         Icon(
@@ -1013,15 +1115,21 @@ private fun PlaylistItem(
 }
 
 @Composable
-private fun StatusBadge(label: String, containerColor: Color) {
+private fun StatusBadge(
+    label: String,
+    containerColor: Color,
+    contentColor: Color = MaterialTheme.colorScheme.onSurface,
+) {
     Surface(
         color = containerColor,
-        shape = MaterialTheme.shapes.small,
+        shape = RoundedCornerShape(12.dp),
     ) {
         Text(
             text = label,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
             style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = contentColor,
         )
     }
 }
@@ -1032,19 +1140,18 @@ private fun AppInfoSection(
     updateState: UpdateState,
     onCheckForUpdates: () -> Unit,
 ) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        ),
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp,
+        shadowElevation = 8.dp,
+        modifier = Modifier.fillMaxWidth(),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
