@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.repository.ChannelRepository
+import com.selecttube.app.data.repository.WatchHistoryRepository
 import com.selecttube.app.playback.PlayerManager
 import com.selecttube.app.util.PasswordSecurity
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -28,6 +29,7 @@ data class ParentalPlaybackRestriction(
 class PlayerViewModel @Inject constructor(
     val playerManager: PlayerManager,
     private val channelRepository: ChannelRepository,
+    private val watchHistoryRepository: WatchHistoryRepository,
 ) : ViewModel() {
 
     val uiState = playerManager.playbackState
@@ -40,6 +42,24 @@ class PlayerViewModel @Inject constructor(
     val parentalRestriction: StateFlow<ParentalPlaybackRestriction> = _parentalRestriction.asStateFlow()
 
     init {
+        // Automatically sync playback progress into Watch History
+        viewModelScope.launch {
+            uiState.collect { state ->
+                val info = state.playbackInfo ?: return@collect
+                if (state.currentPositionMs > 1000L) {
+                    val durationSec = if (state.durationMs > 0L) state.durationMs / 1000L else info.durationSeconds
+                    watchHistoryRepository.recordWatch(
+                        videoId = info.videoId,
+                        title = info.title,
+                        channelName = info.channelName,
+                        channelId = info.channelId,
+                        thumbnailUrl = info.thumbnailUrl,
+                        durationSeconds = durationSec,
+                        positionMs = state.currentPositionMs,
+                    )
+                }
+            }
+        }
         viewModelScope.launch {
             combine(
                 channelRepository.appMode,
@@ -116,9 +136,10 @@ class PlayerViewModel @Inject constructor(
         title: String? = null,
         channelName: String? = null,
         thumbnailUrl: String? = null,
+        startPositionMs: Long = 0L,
     ) {
         _isPlayerExpanded.value = true
-        playerManager.playVideo(urlOrId, title, channelName, thumbnailUrl)
+        playerManager.playVideo(urlOrId, title, channelName, thumbnailUrl, startPositionMs)
     }
 
     fun togglePlayPause() {

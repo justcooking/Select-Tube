@@ -361,10 +361,14 @@ class PlayerManager @Inject constructor(
         initialTitle: String? = null,
         initialChannel: String? = null,
         initialThumbnail: String? = null,
+        startPositionMs: Long = 0L,
     ) {
         netRequestCount.set(0)
         // If the same video is already loaded and no error, just ensure playing
         if (lastUrlOrId == urlOrId && currentPlaybackInfo != null && _playbackState.value.error == null) {
+            if (startPositionMs > 0L) {
+                player.seekTo(startPositionMs)
+            }
             if (!player.isPlaying) {
                 player.play()
             }
@@ -457,6 +461,9 @@ class PlayerManager @Inject constructor(
 
                 // 3. Set MediaItem, prepare, and play (standard Media3 pattern)
                 player.setMediaItem(mediaItem)
+                if (startPositionMs > 0L) {
+                    player.seekTo(startPositionMs)
+                }
                 player.prepare()
                 player.play()
 
