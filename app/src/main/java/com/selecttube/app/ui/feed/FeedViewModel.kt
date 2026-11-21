@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.repository.ChannelRepository
+import com.selecttube.app.data.update.AppReleaseInfo
+import com.selecttube.app.data.update.AppUpdateManager
+import com.selecttube.app.data.update.UpdateState
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.data.youtube.YouTubeRepository
 import com.selecttube.app.domain.Channel
@@ -47,10 +50,14 @@ data class FeedUiState(
 class FeedViewModel @Inject constructor(
     private val channelRepository: ChannelRepository,
     private val youTubeRepository: YouTubeRepository,
+    private val appUpdateManager: AppUpdateManager,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(FeedUiState())
     val uiState: StateFlow<FeedUiState> = _uiState.asStateFlow()
+
+    private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
 
     private val ticker = flow {
         while (true) {
@@ -107,6 +114,48 @@ class FeedViewModel @Inject constructor(
                 }
             }.collect { playlistItems ->
                 _uiState.update { it.copy(playlists = playlistItems) }
+            }
+        }
+
+        // Check for app updates silently in background on launch
+        viewModelScope.launch {
+            try {
+                val result = appUpdateManager.checkForUpdate()
+                result.getOrNull()?.let { release ->
+                    _updateState.value = UpdateState.UpdateAvailable(release)
+                }
+            } catch (_: Exception) {
+                // Background update check should never disrupt user experience
+            }
+        }
+    }
+
+    fun downloadUpdate(release: AppReleaseInfo) {
+        viewModelScope.launch {
+            appUpdateManager.downloadApk(release).collect { state ->
+                _updateState.value = state
+            }
+        }
+    }
+
+    fun installUpdate(apkFile: java.io.File) {
+        appUpdateManager.installApk(apkFile)
+    }
+
+    fun dismissUpdate() {
+        _updateState.value = UpdateState.Idle
+    }
+
+    fun retryUpdate() {
+        val current = _updateState.value
+        if (current is UpdateState.Error) {
+            viewModelScope.launch {
+                val result = appUpdateManager.checkForUpdate()
+                result.getOrNull()?.let { release ->
+                    downloadUpdate(release)
+                } ?: run {
+                    _updateState.value = UpdateState.Idle
+                }
             }
         }
     }

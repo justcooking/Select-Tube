@@ -64,6 +64,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.selecttube.app.data.youtube.VideoFeedItem
+import com.selecttube.app.ui.update.UpdateDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -76,7 +77,16 @@ fun FeedScreen(
     viewModel: FeedViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     var selectedFeedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    UpdateDialog(
+        state = updateState,
+        onDismiss = viewModel::dismissUpdate,
+        onDownload = viewModel::downloadUpdate,
+        onInstall = viewModel::installUpdate,
+        onRetry = viewModel::retryUpdate,
+    )
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,

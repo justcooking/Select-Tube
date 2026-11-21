@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.repository.ChannelRepository
+import com.selecttube.app.data.update.AppReleaseInfo
+import com.selecttube.app.data.update.AppUpdateManager
+import com.selecttube.app.data.update.UpdateState
 import com.selecttube.app.util.PasswordSecurity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
@@ -59,6 +62,7 @@ data class SettingsUiState(
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val repository: ChannelRepository,
+    private val appUpdateManager: AppUpdateManager,
 ) : ViewModel() {
 
     private val ticker = flow {
@@ -70,6 +74,11 @@ class SettingsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
+
+    private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
+
+    val currentVersion: String = appUpdateManager.getCurrentVersionName()
 
     init {
         observeChannels()
@@ -310,5 +319,45 @@ class SettingsViewModel @Inject constructor(
 
     fun cancelPendingPlaylist(playlistId: String) {
         viewModelScope.launch { repository.removePlaylist(playlistId) }
+    }
+
+    // ── App Update Operations ──────────────────────────────────────────────────
+    fun checkForUpdates() {
+        viewModelScope.launch {
+            _updateState.value = UpdateState.Checking
+            val result = appUpdateManager.checkForUpdate()
+            result.fold(
+                onSuccess = { release ->
+                    if (release != null) {
+                        _updateState.value = UpdateState.UpdateAvailable(release)
+                    } else {
+                        _updateState.value = UpdateState.UpToDate
+                    }
+                },
+                onFailure = { error ->
+                    _updateState.value = UpdateState.Error(error.message ?: "Failed to check for updates.")
+                }
+            )
+        }
+    }
+
+    fun downloadUpdate(release: AppReleaseInfo) {
+        viewModelScope.launch {
+            appUpdateManager.downloadApk(release).collect { state ->
+                _updateState.value = state
+            }
+        }
+    }
+
+    fun installUpdate(apkFile: java.io.File) {
+        appUpdateManager.installApk(apkFile)
+    }
+
+    fun dismissUpdate() {
+        _updateState.value = UpdateState.Idle
+    }
+
+    fun retryUpdate() {
+        checkForUpdates()
     }
 }

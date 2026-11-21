@@ -31,12 +31,14 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SmartDisplay
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -82,6 +84,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.selecttube.app.data.preferences.AppMode
+import com.selecttube.app.data.update.UpdateState
+import com.selecttube.app.ui.update.UpdateDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,6 +96,7 @@ fun SettingsScreen(
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var channelToRemove by remember { mutableStateOf<ChannelItemUiState?>(null) }
     var playlistToRemove by remember { mutableStateOf<PlaylistItemUiState?>(null) }
@@ -510,8 +515,25 @@ fun SettingsScreen(
                     }
                 }
             }
+
+            // ── App Information & Updates Section ──────────────────────────────────
+            item(key = "app_info_card") {
+                AppInfoSection(
+                    versionName = viewModel.currentVersion,
+                    updateState = updateState,
+                    onCheckForUpdates = { viewModel.checkForUpdates() },
+                )
+            }
         }
     }
+
+    UpdateDialog(
+        state = updateState,
+        onDismiss = viewModel::dismissUpdate,
+        onDownload = viewModel::downloadUpdate,
+        onInstall = viewModel::installUpdate,
+        onRetry = viewModel::retryUpdate,
+    )
 
     // ── Remove channel confirmation dialog ───────────────────────────────────
     channelToRemove?.let { channel ->
@@ -1001,5 +1023,85 @@ private fun StatusBadge(label: String, containerColor: Color) {
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
             style = MaterialTheme.typography.labelSmall,
         )
+    }
+}
+
+@Composable
+private fun AppInfoSection(
+    versionName: String,
+    updateState: UpdateState,
+    onCheckForUpdates: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Select Tube",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Version $versionName",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Button(
+                    onClick = onCheckForUpdates,
+                    enabled = updateState !is UpdateState.Checking && updateState !is UpdateState.Downloading,
+                ) {
+                    if (updateState is UpdateState.Checking) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Checking...")
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.SystemUpdate,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Check for Updates")
+                    }
+                }
+            }
+
+            if (updateState is UpdateState.UpToDate) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        text = "You are using the latest version of Select Tube.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                    )
+                }
+            }
+        }
     }
 }
