@@ -684,25 +684,47 @@ class YouTubeRepository @Inject constructor() {
             val extractor = youtubeService.getPlaylistExtractor(url)
             extractor.fetchPage()
 
-            val id = extractor.id.ifBlank {
-                try {
-                    youtubeService.playlistLHFactory.fromUrl(url).id
-                } catch (_: Exception) {
-                    url.substringAfter("list=").substringBefore("&")
+            val id = runCatching { extractor.id }.getOrNull()?.ifBlank { null } ?: try {
+                youtubeService.playlistLHFactory.fromUrl(url).id
+            } catch (_: Exception) {
+                url.substringAfter("list=").substringBefore("&")
+            }
+
+            val thumbUrl = runCatching {
+                extractor.thumbnails?.maxByOrNull { it.height * it.width }?.url
+            }.getOrNull()
+
+            val name = runCatching { extractor.name }.getOrNull()?.ifBlank { null } ?: "Untitled Playlist"
+            val uploaderName = runCatching { extractor.uploaderName }.getOrNull()?.ifBlank { null }
+            val uploaderUrl = runCatching { extractor.uploaderUrl }.getOrNull()?.ifBlank { null }
+            val streamCount = runCatching { extractor.streamCount }.getOrDefault(0L)
+            val description = runCatching { extractor.description?.content }.getOrNull()
+
+            var finalThumbUrl = thumbUrl
+            var finalCount = streamCount
+            if (finalThumbUrl == null || finalCount <= 0L) {
+                val fallbackVideos = extractPlaylistVideosFallback(
+                    extractor = extractor,
+                    defaultUploader = uploaderName.orEmpty(),
+                    defaultChannelId = uploaderUrl.orEmpty(),
+                )
+                if (finalThumbUrl == null) {
+                    finalThumbUrl = fallbackVideos.firstOrNull()?.thumbnailUrl
+                }
+                if (finalCount <= 0L && fallbackVideos.isNotEmpty()) {
+                    finalCount = fallbackVideos.size.toLong()
                 }
             }
 
-            val thumbUrl = extractor.thumbnails?.maxByOrNull { it.height * it.width }?.url
-
             ResolvedPlaylist(
                 playlistId = id,
-                name = extractor.name.orEmpty().ifBlank { "Untitled Playlist" },
-                thumbnailUrl = thumbUrl,
-                uploaderName = extractor.uploaderName.orEmpty().ifBlank { null },
-                uploaderUrl = extractor.uploaderUrl.orEmpty().ifBlank { null },
-                videoCount = extractor.streamCount,
-                description = extractor.description?.content,
-                url = extractor.url.ifBlank { url },
+                name = name,
+                thumbnailUrl = finalThumbUrl,
+                uploaderName = uploaderName,
+                uploaderUrl = uploaderUrl,
+                videoCount = finalCount,
+                description = description,
+                url = runCatching { extractor.url }.getOrNull()?.ifBlank { null } ?: url,
             )
         } catch (e: Exception) {
             throw PlaylistNotFoundException("Could not resolve playlist from '$input'.", e)
@@ -751,27 +773,245 @@ class YouTubeRepository @Inject constructor() {
         val extractor = youtubeService.getPlaylistExtractor(url)
         extractor.fetchPage()
 
-        val id = extractor.id.ifBlank {
-            url.substringAfter("list=").substringBefore("&")
+        val id = runCatching { extractor.id }.getOrNull()?.ifBlank { null }
+            ?: url.substringAfter("list=").substringBefore("&")
+
+        val thumbUrl = runCatching {
+            extractor.thumbnails?.maxByOrNull { it.height * it.width }?.url
+        }.getOrNull()
+
+        val name = runCatching { extractor.name }.getOrNull()?.ifBlank { null } ?: "Untitled Playlist"
+        val uploaderName = runCatching { extractor.uploaderName }.getOrNull()?.ifBlank { null }
+        val uploaderUrl = runCatching { extractor.uploaderUrl }.getOrNull()?.ifBlank { null }
+        val streamCount = runCatching { extractor.streamCount }.getOrDefault(0L)
+        val description = runCatching { extractor.description?.content }.getOrNull()
+
+        var videos = emptyList<VideoFeedItem>()
+
+        // 1. Try standard NewPipe extractor initialPage
+        try {
+            val page = extractor.initialPage
+            val items = page?.items?.filterIsInstance<StreamInfoItem>().orEmpty()
+            videos = items.map { item ->
+                extractVideoFeedItem(item, uploaderUrl.orEmpty())
+            }
+        } catch (_: Throwable) {
+            // NewPipe Extractor v0.26.5 throws NPE when getPlaylistHeader() is null
         }
-        val thumbUrl = extractor.thumbnails?.maxByOrNull { it.height * it.width }?.url
+
+        // 2. If standard extractor failed or returned no videos, use robust fallback parser
+        if (videos.isEmpty()) {
+            videos = extractPlaylistVideosFallback(
+                extractor = extractor,
+                defaultUploader = uploaderName.orEmpty(),
+                defaultChannelId = uploaderUrl.orEmpty(),
+            )
+        }
+
+        val finalThumbUrl = thumbUrl ?: videos.firstOrNull()?.thumbnailUrl
+        val finalCount = if (streamCount > 0L) streamCount else videos.size.toLong()
+
         val resolved = ResolvedPlaylist(
             playlistId = id,
-            name = extractor.name.orEmpty().ifBlank { "Untitled Playlist" },
-            thumbnailUrl = thumbUrl,
-            uploaderName = extractor.uploaderName.orEmpty().ifBlank { null },
-            uploaderUrl = extractor.uploaderUrl.orEmpty().ifBlank { null },
-            videoCount = extractor.streamCount,
-            description = extractor.description?.content,
-            url = extractor.url.ifBlank { url },
+            name = name,
+            thumbnailUrl = finalThumbUrl,
+            uploaderName = uploaderName,
+            uploaderUrl = uploaderUrl,
+            videoCount = finalCount,
+            description = description,
+            url = runCatching { extractor.url }.getOrNull()?.ifBlank { null } ?: url,
         )
 
-        val page = extractor.initialPage
-        val items = page?.items?.filterIsInstance<StreamInfoItem>().orEmpty()
-        val videos = items.map { item ->
-            extractVideoFeedItem(item, resolved.uploaderUrl.orEmpty())
+        Pair(resolved, videos)
+    }
+
+    /**
+     * Fallback extractor for YouTube playlists when NewPipe Extractor v0.26.5's getInitialPage()
+     * crashes due to missing playlistHeaderRenderer or fails to parse modern lockupViewModel items.
+     * Extracts items from initialBrowseContinuationResponse directly.
+     */
+    private fun extractPlaylistVideosFallback(
+        extractor: Any,
+        defaultUploader: String,
+        defaultChannelId: String,
+    ): List<VideoFeedItem> {
+        val continuation = getContinuationMap(extractor) ?: return emptyList()
+        val results = mutableListOf<VideoFeedItem>()
+        val seenVideoIds = mutableSetOf<String>()
+
+        fun processItem(item: Map<*, *>) {
+            var videoId: String? = null
+            var title: String? = null
+            var uploader: String? = null
+            var thumbUrl: String? = null
+            var durationSec: Long = -1L
+
+            val lockup = item["lockupViewModel"] as? Map<*, *>
+            val pvr = item["playlistVideoRenderer"] as? Map<*, *>
+
+            if (lockup != null) {
+                videoId = lockup["contentId"] as? String
+
+                val meta = lockup["metadata"] as? Map<*, *>
+                val lockupMeta = meta?.get("lockupMetadataViewModel") as? Map<*, *>
+                if (lockupMeta != null) {
+                    val titleObj = lockupMeta["title"] as? Map<*, *>
+                    title = titleObj?.get("content") as? String
+
+                    val contentMeta = lockupMeta["metadata"] as? Map<*, *>
+                    val rowMeta = contentMeta?.get("contentMetadataViewModel") as? Map<*, *>
+                    val rows = rowMeta?.get("metadataRows") as? List<*>
+                    if (!rows.isNullOrEmpty()) {
+                        val firstRow = rows[0] as? Map<*, *>
+                        val parts = (firstRow?.get("metadataParts") ?: firstRow?.get("parts")) as? List<*>
+                        if (!parts.isNullOrEmpty()) {
+                            val firstPart = parts[0] as? Map<*, *>
+                            val textObj = firstPart?.get("text") as? Map<*, *>
+                            uploader = textObj?.get("content") as? String
+                        }
+                    }
+                }
+
+                val contentImage = lockup["contentImage"] as? Map<*, *>
+                val thumbVm = contentImage?.get("thumbnailViewModel") as? Map<*, *>
+                if (thumbVm != null) {
+                    val image = thumbVm["image"] as? Map<*, *>
+                    val sources = image?.get("sources") as? List<*>
+                    if (!sources.isNullOrEmpty()) {
+                        val lastSource = sources.lastOrNull() as? Map<*, *>
+                        thumbUrl = lastSource?.get("url") as? String
+                    }
+                    val overlays = thumbVm["overlays"] as? List<*>
+                    if (!overlays.isNullOrEmpty()) {
+                        val firstOverlay = overlays[0] as? Map<*, *>
+                        val bottom = firstOverlay?.get("thumbnailBottomOverlayViewModel") as? Map<*, *>
+                        val badges = bottom?.get("badges") as? List<*>
+                        if (!badges.isNullOrEmpty()) {
+                            val firstBadge = badges[0] as? Map<*, *>
+                            val badgeVm = firstBadge?.get("thumbnailBadgeViewModel") as? Map<*, *>
+                            val durationText = badgeVm?.get("text") as? String
+                            if (!durationText.isNullOrBlank() && durationText.contains(":")) {
+                                val segs = durationText.split(":")
+                                try {
+                                    durationSec = when (segs.size) {
+                                        2 -> segs[0].toLong() * 60 + segs[1].toLong()
+                                        3 -> segs[0].toLong() * 3600 + segs[1].toLong() * 60 + segs[2].toLong()
+                                        else -> -1L
+                                    }
+                                } catch (_: Throwable) {
+                                    durationSec = -1L
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (pvr != null) {
+                videoId = pvr["videoId"] as? String
+
+                val titleObj = pvr["title"] as? Map<*, *>
+                val runs = titleObj?.get("runs") as? List<*>
+                title = if (!runs.isNullOrEmpty()) {
+                    (runs[0] as? Map<*, *>)?.get("text") as? String
+                } else {
+                    titleObj?.get("simpleText") as? String
+                }
+
+                val lenSec = pvr["lengthSeconds"]
+                durationSec = when (lenSec) {
+                    is Number -> lenSec.toLong()
+                    is String -> lenSec.toLongOrNull() ?: -1L
+                    else -> -1L
+                }
+
+                val thumbObj = pvr["thumbnail"] as? Map<*, *>
+                val thumbs = thumbObj?.get("thumbnails") as? List<*>
+                if (!thumbs.isNullOrEmpty()) {
+                    val lastThumb = thumbs.lastOrNull() as? Map<*, *>
+                    thumbUrl = lastThumb?.get("url") as? String
+                }
+
+                val byline = pvr["shortBylineText"] as? Map<*, *>
+                val bylineRuns = byline?.get("runs") as? List<*>
+                if (!bylineRuns.isNullOrEmpty()) {
+                    uploader = (bylineRuns[0] as? Map<*, *>)?.get("text") as? String
+                }
+            }
+
+            if (!videoId.isNullOrBlank() && seenVideoIds.add(videoId)) {
+                results.add(
+                    VideoFeedItem(
+                        videoId = videoId,
+                        title = title.orEmpty().ifBlank { "Untitled Video" },
+                        channelName = uploader.orEmpty().ifBlank { defaultUploader },
+                        channelId = defaultChannelId,
+                        thumbnailUrl = thumbUrl,
+                        uploadDateText = null,
+                        uploadTimestamp = 0L,
+                        durationSeconds = durationSec,
+                        url = "https://www.youtube.com/watch?v=$videoId",
+                    )
+                )
+            }
         }
 
-        Pair(resolved, videos)
+        // 1. Search in onResponseReceivedActions
+        val actions = continuation["onResponseReceivedActions"] as? List<*>
+        if (actions != null) {
+            for (action in actions) {
+                val actMap = action as? Map<*, *> ?: continue
+                val appendAction = (actMap["appendContinuationItemsAction"]
+                    ?: actMap["reloadContinuationItemsCommand"]) as? Map<*, *>
+                val continuationItems = appendAction?.get("continuationItems") as? List<*>
+                if (continuationItems != null) {
+                    for (item in continuationItems) {
+                        val itemMap = item as? Map<*, *> ?: continue
+                        processItem(itemMap)
+                    }
+                }
+            }
+        }
+
+        // 2. If no items were found, perform recursive traversal on the whole continuation map
+        if (results.isEmpty()) {
+            fun traverse(value: Any?) {
+                when (value) {
+                    is Map<*, *> -> {
+                        if (value.containsKey("lockupViewModel") || value.containsKey("playlistVideoRenderer")) {
+                            processItem(value)
+                        } else {
+                            for (v in value.values) {
+                                traverse(v)
+                            }
+                        }
+                    }
+                    is List<*> -> {
+                        for (element in value) {
+                            traverse(element)
+                        }
+                    }
+                }
+            }
+            traverse(continuation)
+        }
+
+        return results
+    }
+
+    private fun getContinuationMap(extractor: Any): Map<*, *>? {
+        var clazz: Class<*>? = extractor.javaClass
+        while (clazz != null && clazz != Any::class.java) {
+            try {
+                val field = clazz.getDeclaredField("initialBrowseContinuationResponse")
+                field.isAccessible = true
+                val obj = field.get(extractor)
+                if (obj is Map<*, *>) return obj
+            } catch (_: NoSuchFieldException) {
+                // Check superclass
+            } catch (_: Throwable) {
+                break
+            }
+            clazz = clazz.superclass
+        }
+        return null
     }
 }
