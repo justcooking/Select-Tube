@@ -2,8 +2,10 @@ package com.selecttube.app.ui.feed
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.selecttube.app.data.db.WatchHistoryEntity
 import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.repository.ChannelRepository
+import com.selecttube.app.data.repository.WatchHistoryRepository
 import com.selecttube.app.data.update.AppReleaseInfo
 import com.selecttube.app.data.update.AppUpdateManager
 import com.selecttube.app.data.update.UpdateState
@@ -16,11 +18,13 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Collections
@@ -51,6 +55,7 @@ class FeedViewModel @Inject constructor(
     private val channelRepository: ChannelRepository,
     private val youTubeRepository: YouTubeRepository,
     private val appUpdateManager: AppUpdateManager,
+    private val watchHistoryRepository: WatchHistoryRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(FeedUiState())
@@ -58,6 +63,9 @@ class FeedViewModel @Inject constructor(
 
     private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
+
+    val watchHistory: StateFlow<List<WatchHistoryEntity>> = watchHistoryRepository.history
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val ticker = flow {
         while (true) {
@@ -267,5 +275,18 @@ class FeedViewModel @Inject constructor(
             }
         }
         return errorMap
+    }
+
+    // ── Watch History Operations ───────────────────────────────────────────────
+    fun deleteHistoryItem(videoId: String) {
+        viewModelScope.launch {
+            watchHistoryRepository.deleteItem(videoId)
+        }
+    }
+
+    fun clearWatchHistory() {
+        viewModelScope.launch {
+            watchHistoryRepository.clearHistory()
+        }
     }
 }

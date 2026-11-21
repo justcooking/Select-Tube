@@ -166,6 +166,7 @@ private fun lerpDp(start: Dp, stop: Dp, fraction: Float): Dp =
 @Composable
 fun PlayerScreen(
     viewModel: PlayerViewModel = hiltViewModel(),
+    bottomBarOffset: androidx.compose.ui.unit.Dp = 0.dp,
     onNavigateBack: () -> Unit = { viewModel.collapsePlayer() },
     onChannelClick: (String, String) -> Unit = { _, _ -> },
 ) {
@@ -426,7 +427,7 @@ fun PlayerScreen(
         val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         val navBarHeight = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val miniPlayerHeight = 64.dp
-        val collapsedOffsetY = (screenHeight - miniPlayerHeight - navBarHeight).coerceAtLeast(0.dp)
+        val collapsedOffsetY = (screenHeight - miniPlayerHeight - navBarHeight - bottomBarOffset).coerceAtLeast(0.dp)
         val collapsedOffsetYPx = with(density) { collapsedOffsetY.toPx() }.coerceAtLeast(1f)
         val flingVelocityPx = with(density) { 600.dp.toPx() }
 

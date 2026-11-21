@@ -17,6 +17,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.selecttube.app.ui.addchannel.AddChannelScreen
@@ -39,6 +40,8 @@ fun AppNavigation(
     val playbackState by playerViewModel.uiState.collectAsStateWithLifecycle()
     val isExpanded by playerViewModel.isPlayerExpanded.collectAsStateWithLifecycle()
     val isOnboardingDone by navViewModel.onboardingCompleted.collectAsStateWithLifecycle()
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val isBottomBarVisible = navBackStackEntry?.destination?.route == Screen.Feed.route
 
     if (isOnboardingDone == null) {
         Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
@@ -86,6 +89,16 @@ fun AppNavigation(
                                 title = video.title,
                                 channelName = video.channelName,
                                 thumbnailUrl = video.thumbnailUrl,
+                            )
+                            playerViewModel.expandPlayer()
+                        },
+                        onRecentVideoClick = { recent ->
+                            playerViewModel.playVideo(
+                                urlOrId = recent.videoId,
+                                title = recent.title,
+                                channelName = recent.channelName,
+                                thumbnailUrl = recent.thumbnailUrl,
+                                startPositionMs = recent.lastPositionMs,
                             )
                             playerViewModel.expandPlayer()
                         },
@@ -196,6 +209,7 @@ fun AppNavigation(
             if (hasVideo) {
                 PlayerScreen(
                     viewModel = playerViewModel,
+                    bottomBarOffset = if (isBottomBarVisible) 80.dp else 0.dp,
                     onNavigateBack = { playerViewModel.collapsePlayer() },
                     onChannelClick = { channelId, channelName ->
                         playerViewModel.collapsePlayer()

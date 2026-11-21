@@ -22,11 +22,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -37,10 +39,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -63,6 +65,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.selecttube.app.data.db.WatchHistoryEntity
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.ui.update.UpdateDialog
 
@@ -72,12 +75,14 @@ fun FeedScreen(
     onOpenSettings: () -> Unit,
     onOpenSearch: () -> Unit = {},
     onVideoClick: (VideoFeedItem) -> Unit = {},
+    onRecentVideoClick: (WatchHistoryEntity) -> Unit = {},
     onPlaylistClick: (PlaylistItemUiState) -> Unit = {},
     onAddPlaylist: () -> Unit = {},
     viewModel: FeedViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
+    val watchHistory by viewModel.watchHistory.collectAsStateWithLifecycle()
     var selectedFeedTab by rememberSaveable { mutableIntStateOf(0) }
 
     UpdateDialog(
@@ -108,134 +113,168 @@ fun FeedScreen(
                 ),
             )
         },
+        bottomBar = {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+            ) {
+                NavigationBarItem(
+                    selected = selectedFeedTab == 0,
+                    onClick = { selectedFeedTab = 0 },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.Subscriptions,
+                            contentDescription = "Channels Feed",
+                        )
+                    },
+                    label = { Text("Feed") },
+                )
+                NavigationBarItem(
+                    selected = selectedFeedTab == 1,
+                    onClick = { selectedFeedTab = 1 },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.PlaylistPlay,
+                            contentDescription = "Playlists",
+                        )
+                    },
+                    label = {
+                        Text(if (state.playlists.isNotEmpty()) "Playlists (${state.playlists.size})" else "Playlists")
+                    },
+                )
+                NavigationBarItem(
+                    selected = selectedFeedTab == 2,
+                    onClick = { selectedFeedTab = 2 },
+                    icon = {
+                        Icon(
+                            imageVector = Icons.Default.History,
+                            contentDescription = "Recents",
+                        )
+                    },
+                    label = {
+                        Text(if (watchHistory.isNotEmpty()) "Recents (${watchHistory.size})" else "Recents")
+                    },
+                )
+            }
+        },
     ) { innerPadding ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            TabRow(
-                selectedTabIndex = selectedFeedTab,
-                containerColor = MaterialTheme.colorScheme.background,
-            ) {
-                Tab(
-                    selected = selectedFeedTab == 0,
-                    onClick = { selectedFeedTab = 0 },
-                    text = { Text("Channels Feed") },
-                )
-                Tab(
-                    selected = selectedFeedTab == 1,
-                    onClick = { selectedFeedTab = 1 },
-                    text = {
-                        Text(if (state.playlists.isNotEmpty()) "Playlists (${state.playlists.size})" else "Playlists")
-                    },
-                )
-            }
-
-            HorizontalDivider()
-
-            if (selectedFeedTab == 0) {
-                PullToRefreshBox(
-                    isRefreshing = state.isRefreshing,
-                    onRefresh = { viewModel.refresh() },
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-            when {
-                // Initial loading state before any videos or errors arrive
-                state.isLoading && state.videos.isEmpty() -> {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        CircularProgressIndicator()
-                    }
-                }
-
-                // No active channels
-                !state.hasActiveChannels -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            text = "No channels selected",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Go to Settings to add channels.\nOnly videos from your selected channels will appear here.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
-                // Active channels present, but no videos found (and not loading)
-                state.videos.isEmpty() && !state.isLoading -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .verticalScroll(rememberScrollState())
-                            .padding(32.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        if (state.channelErrors.isNotEmpty()) {
-                            ChannelErrorsSection(errors = state.channelErrors)
-                            Spacer(modifier = Modifier.height(16.dp))
-                        }
-                        Text(
-                            text = "No videos found",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "No videos available from your active channels yet.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-
-                // Feed with videos
-                else -> {
-                    LazyColumn(
+            when (selectedFeedTab) {
+                0 -> {
+                    PullToRefreshBox(
+                        isRefreshing = state.isRefreshing,
+                        onRefresh = { viewModel.refresh() },
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        if (state.channelErrors.isNotEmpty()) {
-                            item(key = "feed_errors") {
-                                ChannelErrorsSection(
-                                    errors = state.channelErrors,
-                                    modifier = Modifier.padding(16.dp),
-                                )
+                        when {
+                            state.isLoading && state.videos.isEmpty() -> {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    CircularProgressIndicator()
+                                }
+                            }
+
+                            !state.hasActiveChannels -> {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(32.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                ) {
+                                    Text(
+                                        text = "No channels selected",
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "Go to Settings to add channels.\nOnly videos from your selected channels will appear here.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        textAlign = TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+
+                            state.videos.isEmpty() && !state.isLoading -> {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(32.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center,
+                                ) {
+                                    if (state.channelErrors.isNotEmpty()) {
+                                        ChannelErrorsSection(errors = state.channelErrors)
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                    }
+                                    Text(
+                                        text = "No videos found",
+                                        style = MaterialTheme.typography.titleMedium,
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "No videos available from your active channels yet.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        textAlign = TextAlign.Center,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+
+                            else -> {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentPadding = PaddingValues(bottom = 16.dp),
+                                ) {
+                                    if (state.channelErrors.isNotEmpty()) {
+                                        item(key = "feed_errors") {
+                                            ChannelErrorsSection(
+                                                errors = state.channelErrors,
+                                                modifier = Modifier.padding(16.dp),
+                                            )
+                                        }
+                                    }
+
+                                    items(
+                                        items = state.videos,
+                                        key = { it.url.ifBlank { it.videoId } },
+                                        contentType = { "video_item" },
+                                    ) { video ->
+                                        VideoItem(video = video, onClick = { onVideoClick(video) })
+                                        HorizontalDivider()
+                                    }
+                                }
                             }
                         }
-
-                        items(
-                            items = state.videos,
-                            key = { it.url.ifBlank { it.videoId } },
-                            contentType = { "video_item" },
-                        ) { video ->
-                            VideoItem(video = video, onClick = { onVideoClick(video) })
-                            HorizontalDivider()
-                        }
                     }
                 }
+
+                1 -> {
+                    PlaylistsFeedView(
+                        playlists = state.playlists,
+                        onPlaylistClick = onPlaylistClick,
+                        onAddPlaylist = onAddPlaylist,
+                    )
+                }
+
+                2 -> {
+                    RecentsView(
+                        history = watchHistory,
+                        onVideoClick = onRecentVideoClick,
+                        onDeleteItem = viewModel::deleteHistoryItem,
+                        onClearHistory = viewModel::clearWatchHistory,
+                    )
+                }
             }
-        }
-    } else {
-        PlaylistsFeedView(
-            playlists = state.playlists,
-            onPlaylistClick = onPlaylistClick,
-            onAddPlaylist = onAddPlaylist,
-        )
-    }
         }
     }
 }
