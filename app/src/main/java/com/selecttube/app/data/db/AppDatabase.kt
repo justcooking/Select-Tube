@@ -7,11 +7,13 @@ import androidx.room.RoomDatabase
     entities = [
         ChannelEntity::class,
         PlaylistEntity::class,
+        WatchHistoryEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = false,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun channelDao(): ChannelDao
     abstract fun playlistDao(): PlaylistDao
+    abstract fun watchHistoryDao(): WatchHistoryDao
 }

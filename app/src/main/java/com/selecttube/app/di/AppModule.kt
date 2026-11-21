@@ -5,6 +5,7 @@ import androidx.room.Room
 import com.selecttube.app.data.db.AppDatabase
 import com.selecttube.app.data.db.ChannelDao
 import com.selecttube.app.data.db.PlaylistDao
+import com.selecttube.app.data.db.WatchHistoryDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -32,4 +33,7 @@ object AppModule {
 
     @Provides
     fun providePlaylistDao(db: AppDatabase): PlaylistDao = db.playlistDao()
+
+    @Provides
+    fun provideWatchHistoryDao(db: AppDatabase): WatchHistoryDao = db.watchHistoryDao()
 }
