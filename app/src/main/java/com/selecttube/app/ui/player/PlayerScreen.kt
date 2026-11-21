@@ -107,6 +107,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -553,11 +554,15 @@ fun PlayerScreen(
             }
         }
 
+        val sheetHeight = if (inFullscreenMode) screenHeight else lerpDp(miniPlayerHeight, screenHeight, progress)
+
         // Entire Sliding Sheet Container
         Surface(
             modifier = Modifier
-                .fillMaxSize()
-                .offset { IntOffset(0, with(density) { currentSheetOffsetY.roundToPx() }) },
+                .fillMaxWidth()
+                .height(sheetHeight)
+                .offset { IntOffset(0, with(density) { currentSheetOffsetY.roundToPx() }) }
+                .clipToBounds(),
             color = if (progress > 0.4f) Brand900 else Brand700,
             tonalElevation = if (progress < 0.4f) 8.dp else 0.dp,
             shadowElevation = if (progress < 0.4f) 8.dp else 0.dp,

@@ -69,7 +69,9 @@ fun AppNavigation(
     val appMode by navViewModel.appMode.collectAsStateWithLifecycle()
     val dialogState by navViewModel.dialogState.collectAsStateWithLifecycle()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val isBottomBarVisible = navBackStackEntry?.destination?.route == Screen.Feed.route
+    val startRoute = if (isOnboardingDone == true) Screen.Feed.route else Screen.Onboarding.route
+    val currentRoute = navBackStackEntry?.destination?.route ?: startRoute
+    val isBottomBarVisible = currentRoute == Screen.Feed.route
 
     LaunchedEffect(Unit) {
         navViewModel.navCommands.collect { cmd ->
@@ -100,7 +102,6 @@ fun AppNavigation(
         return
     }
 
-    val startRoute = if (isOnboardingDone == true) Screen.Feed.route else Screen.Onboarding.route
     val hasVideo = playbackState.playbackInfo != null || playbackState.isResolving
 
     Scaffold(
