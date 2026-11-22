@@ -67,6 +67,20 @@ private const val LOG_TAG = "SelectTubeMedia"
 private const val NET_LOG_TAG = "SelectTubeNet"
 private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
+data class PlayQueueItem(
+    val videoId: String,
+    val title: String,
+    val channelName: String,
+    val thumbnailUrl: String?,
+    val durationSeconds: Long = 0L,
+)
+
+data class SleepTimerInfo(
+    val isActive: Boolean = false,
+    val remainingSeconds: Long = 0L,
+    val isEndOfVideo: Boolean = false,
+)
+
 data class PlaybackState(
     val playbackInfo: ResolvedPlaybackInfo? = null,
     val isPlaying: Boolean = false,
@@ -265,6 +279,16 @@ class PlayerManager @Inject constructor(
     private val _playbackState = MutableStateFlow(PlaybackState())
     val playbackState: StateFlow<PlaybackState> = _playbackState.asStateFlow()
 
+    private val _queue = MutableStateFlow<List<PlayQueueItem>>(emptyList())
+    val queue: StateFlow<List<PlayQueueItem>> = _queue.asStateFlow()
+
+    private val _history = MutableStateFlow<List<PlayQueueItem>>(emptyList())
+    val history: StateFlow<List<PlayQueueItem>> = _history.asStateFlow()
+
+    private val _sleepTimer = MutableStateFlow(SleepTimerInfo())
+    val sleepTimer: StateFlow<SleepTimerInfo> = _sleepTimer.asStateFlow()
+    private var sleepTimerJob: Job? = null
+
     private var currentPlaybackInfo: ResolvedPlaybackInfo? = null
     private var lastUrlOrId: String? = null
     private var hasRetriedExpiration = false
@@ -309,6 +333,16 @@ class PlayerManager @Inject constructor(
                             "mediaMetadata.title='${player.mediaMetadata.title}' " +
                             "currentMediaItem?.mediaId='${player.currentMediaItem?.mediaId}'",
                     )
+                }
+                if (playbackState == Player.STATE_ENDED) {
+                    if (_sleepTimer.value.isActive && _sleepTimer.value.isEndOfVideo) {
+                        cancelSleepTimer()
+                        player.pause()
+                    } else if (_queue.value.isNotEmpty()) {
+                        scope.launch {
+                            playNextFromQueue()
+                        }
+                    }
                 }
             }
 
@@ -356,6 +390,163 @@ class PlayerManager @Inject constructor(
         }
     }
 
+    fun enqueue(item: PlayQueueItem, playNext: Boolean = false) {
+        // If nothing is currently loaded or playing, start playing immediately
+        if (_playbackState.value.playbackInfo == null && !_playbackState.value.isResolving) {
+            playVideo(
+                urlOrId = item.videoId,
+                initialTitle = item.title,
+                initialChannel = item.channelName,
+                initialThumbnail = item.thumbnailUrl,
+            )
+            return
+        }
+
+        _queue.update { current ->
+            if (playNext) {
+                listOf(item) + current
+            } else {
+                current + item
+            }
+        }
+    }
+
+    fun playQueue(items: List<PlayQueueItem>, startIndex: Int = 0) {
+        if (items.isEmpty()) return
+        val target = items.getOrNull(startIndex) ?: items.first()
+        val remainder = items.filterIndexed { index, _ -> index != startIndex }
+        _queue.value = remainder
+        playVideo(
+            urlOrId = target.videoId,
+            initialTitle = target.title,
+            initialChannel = target.channelName,
+            initialThumbnail = target.thumbnailUrl,
+        )
+    }
+
+    fun playNextFromQueue() {
+        val currentQueue = _queue.value
+        if (currentQueue.isEmpty()) return
+        val nextItem = currentQueue.first()
+        _queue.value = currentQueue.drop(1)
+        playVideo(
+            urlOrId = nextItem.videoId,
+            initialTitle = nextItem.title,
+            initialChannel = nextItem.channelName,
+            initialThumbnail = nextItem.thumbnailUrl,
+        )
+    }
+
+    fun playPrevious() {
+        // If played more than 3 seconds, restart current video
+        if (player.currentPosition > 3_000L) {
+            seekTo(0L)
+            if (!player.isPlaying) {
+                player.play()
+            }
+            return
+        }
+
+        val historyList = _history.value
+        if (historyList.isEmpty()) {
+            seekTo(0L)
+            return
+        }
+
+        val prevItem = historyList.first()
+        _history.value = historyList.drop(1)
+
+        // Put current video back at the front of the queue so user can skip forward again
+        currentPlaybackInfo?.let { curr ->
+            val currItem = PlayQueueItem(
+                videoId = curr.videoId,
+                title = curr.title,
+                channelName = curr.channelName,
+                thumbnailUrl = curr.thumbnailUrl,
+                durationSeconds = curr.durationSeconds,
+            )
+            _queue.update { listOf(currItem) + it }
+        }
+
+        playVideo(
+            urlOrId = prevItem.videoId,
+            initialTitle = prevItem.title,
+            initialChannel = prevItem.channelName,
+            initialThumbnail = prevItem.thumbnailUrl,
+        )
+    }
+
+    fun playQueueIndex(index: Int) {
+        val currentQueue = _queue.value
+        if (index !in currentQueue.indices) return
+        val target = currentQueue[index]
+        _queue.value = currentQueue.filterIndexed { i, _ -> i != index }
+        playVideo(
+            urlOrId = target.videoId,
+            initialTitle = target.title,
+            initialChannel = target.channelName,
+            initialThumbnail = target.thumbnailUrl,
+        )
+    }
+
+    fun removeQueueItem(index: Int) {
+        _queue.update { current ->
+            current.filterIndexed { i, _ -> i != index }
+        }
+    }
+
+    fun clearQueue() {
+        _queue.value = emptyList()
+    }
+
+    fun shuffleQueue() {
+        _queue.update { current ->
+            if (current.size <= 1) current
+            else current.shuffled()
+        }
+    }
+
+    fun startSleepTimer(minutes: Int) {
+        sleepTimerJob?.cancel()
+        if (minutes <= 0) {
+            cancelSleepTimer()
+            return
+        }
+        val totalSec = minutes * 60L
+        _sleepTimer.value = SleepTimerInfo(
+            isActive = true,
+            remainingSeconds = totalSec,
+            isEndOfVideo = false,
+        )
+        sleepTimerJob = scope.launch {
+            var remaining = totalSec
+            while (remaining > 0 && isActive) {
+                delay(1000L)
+                remaining--
+                _sleepTimer.update { it.copy(remainingSeconds = remaining) }
+            }
+            if (isActive) {
+                player.pause()
+                _sleepTimer.value = SleepTimerInfo()
+            }
+        }
+    }
+
+    fun setSleepTimerEndOfVideo() {
+        sleepTimerJob?.cancel()
+        _sleepTimer.value = SleepTimerInfo(
+            isActive = true,
+            remainingSeconds = 0L,
+            isEndOfVideo = true,
+        )
+    }
+
+    fun cancelSleepTimer() {
+        sleepTimerJob?.cancel()
+        sleepTimerJob = null
+        _sleepTimer.value = SleepTimerInfo()
+    }
+
     fun playVideo(
         urlOrId: String,
         initialTitle: String? = null,
@@ -374,6 +565,22 @@ class PlayerManager @Inject constructor(
             }
             startPlaybackService()
             return
+        }
+
+        // Save previous video to history
+        currentPlaybackInfo?.let { prev ->
+            if (prev.videoId.isNotBlank() && prev.videoId != urlOrId) {
+                val prevItem = PlayQueueItem(
+                    videoId = prev.videoId,
+                    title = prev.title,
+                    channelName = prev.channelName,
+                    thumbnailUrl = prev.thumbnailUrl,
+                    durationSeconds = prev.durationSeconds,
+                )
+                _history.update { current ->
+                    (listOf(prevItem) + current.filter { it.videoId != prev.videoId }).take(50)
+                }
+            }
         }
 
         lastUrlOrId = urlOrId
@@ -515,6 +722,7 @@ class PlayerManager @Inject constructor(
     }
 
     fun stop() {
+        cancelSleepTimer()
         resolveJob?.cancel()
         if (_playbackState.value.isBackgroundOnly) {
             player.trackSelectionParameters = player.trackSelectionParameters

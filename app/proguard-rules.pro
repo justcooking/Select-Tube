@@ -12,6 +12,9 @@
 # Keep Media3 service info
 -keep class androidx.media3.** { *; }
 
+# Keep Room database and entities
+-keep class com.selecttube.app.data.db.** { *; }
+
 # Keep nanojson for NewPipe Extractor runtime responses
 -keep class com.grack.nanojson.** { *; }
 -dontwarn com.grack.nanojson.**

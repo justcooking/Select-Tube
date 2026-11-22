@@ -10,6 +10,7 @@ import android.content.res.Configuration
 import android.os.Build
 import android.view.OrientationEventListener
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -39,6 +40,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
@@ -58,9 +62,11 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ClosedCaption
 import androidx.compose.material.icons.filled.ClosedCaptionOff
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Fullscreen
@@ -71,10 +77,18 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistAdd
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material.icons.filled.TimerOff
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -84,12 +98,14 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -145,8 +161,12 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.selecttube.app.data.db.LocalPlaylistWithCount
 import com.selecttube.app.data.youtube.DescriptionType
+import com.selecttube.app.data.youtube.ResolvedPlaybackInfo
 import com.selecttube.app.playback.PlaybackState
+import com.selecttube.app.playback.PlayQueueItem
+import com.selecttube.app.playback.SleepTimerInfo
 import com.selecttube.app.ui.theme.Brand500
 import com.selecttube.app.ui.theme.Brand700
 import com.selecttube.app.ui.theme.Brand900
@@ -175,6 +195,13 @@ fun PlayerScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val isExpanded by viewModel.isPlayerExpanded.collectAsStateWithLifecycle()
     val parentalRestriction by viewModel.parentalRestriction.collectAsStateWithLifecycle()
+    val queue by viewModel.queue.collectAsStateWithLifecycle()
+    val history by viewModel.history.collectAsStateWithLifecycle()
+    val sleepTimer by viewModel.sleepTimer.collectAsStateWithLifecycle()
+    val localPlaylists by viewModel.localPlaylists.collectAsStateWithLifecycle(emptyList())
+    var showQueueSheet by rememberSaveable { mutableStateOf(false) }
+    var showSleepTimerDialog by rememberSaveable { mutableStateOf(false) }
+    var showSavePlaylistDialog by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val coroutineScope = rememberCoroutineScope()
@@ -669,6 +696,20 @@ fun PlayerScreen(
                             )
                         }
 
+                        if (queue.isNotEmpty()) {
+                            IconButton(
+                                onClick = { viewModel.playNext() },
+                                enabled = progress < 0.2f,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.SkipNext,
+                                    contentDescription = "Next video",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(26.dp),
+                                )
+                            }
+                        }
+
                         IconButton(
                             onClick = { viewModel.stop() },
                             enabled = progress < 0.2f,
@@ -875,10 +916,10 @@ fun PlayerScreen(
 
                         Spacer(modifier = Modifier.height(18.dp))
 
-                        // Action buttons row: Background button
+                        // Action buttons row: Background button & Queue button
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Start,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -906,6 +947,42 @@ fun PlayerScreen(
                                     text = "Background",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color.White,
+                                )
+                            }
+
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        showQueueSheet = true
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                            ) {
+                                BadgedBox(
+                                    badge = {
+                                        if (queue.isNotEmpty()) {
+                                            Badge(
+                                                containerColor = Brand500,
+                                                contentColor = Color.White,
+                                            ) {
+                                                Text("${queue.size}")
+                                            }
+                                        }
+                                    },
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.QueueMusic,
+                                        contentDescription = "Queue",
+                                        tint = if (queue.isNotEmpty()) Brand500 else Color.White,
+                                        modifier = Modifier.size(24.dp),
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Queue",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (queue.isNotEmpty()) Brand500 else Color.White,
                                 )
                             }
                         }
@@ -1015,6 +1092,37 @@ fun PlayerScreen(
                                     }
                                 }
                             }
+                        }
+
+                        // Up Next in Queue section
+                        if (queue.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(18.dp))
+                            QueueSection(
+                                queue = queue,
+                                currentPlayback = state.playbackInfo,
+                                sleepTimer = sleepTimer,
+                                onPlayItem = { index ->
+                                    viewModel.playQueueIndex(index)
+                                },
+                                onRemoveItem = { index ->
+                                    viewModel.removeQueueItem(index)
+                                },
+                                onClearQueue = {
+                                    viewModel.clearQueue()
+                                },
+                                onShuffleQueue = {
+                                    viewModel.shuffleQueue()
+                                },
+                                onOpenSleepTimer = {
+                                    showSleepTimerDialog = true
+                                },
+                                onOpenSavePlaylist = {
+                                    showSavePlaylistDialog = true
+                                },
+                                onOpenFullQueue = {
+                                    showQueueSheet = true
+                                },
+                            )
                         }
                     }
                 }
@@ -1540,7 +1648,37 @@ fun PlayerScreen(
                                             }
                                         }
 
-                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+
+                                        IconButton(
+                                            onClick = {
+                                                showQueueSheet = true
+                                                lastUserInteractionTime = System.currentTimeMillis()
+                                            },
+                                            modifier = Modifier.size(36.dp),
+                                        ) {
+                                            BadgedBox(
+                                                badge = {
+                                                    if (queue.isNotEmpty()) {
+                                                        Badge(
+                                                            containerColor = Brand500,
+                                                            contentColor = Color.White,
+                                                        ) {
+                                                            Text("${queue.size}")
+                                                        }
+                                                    }
+                                                },
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.QueueMusic,
+                                                    contentDescription = "Queue",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(22.dp),
+                                                )
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.width(4.dp))
 
                                         IconButton(
                                             onClick = {
@@ -1574,30 +1712,75 @@ fun PlayerScreen(
                                     }
                                 }
 
-                                // Center: Large Play/Pause button
+                                // Center: Previous / Play-Pause / Next controls
                                 if (!state.isBuffering && !state.isResolving) {
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.Center)
-                                            .size(64.dp)
-                                            .clip(CircleShape)
-                                            .background(Color.Black.copy(alpha = 0.35f))
-                                            .clickable(
-                                                interactionSource = remember { MutableInteractionSource() },
-                                                indication = ripple(bounded = true, radius = 32.dp),
-                                                onClick = {
-                                                    viewModel.togglePlayPause()
-                                                    lastUserInteractionTime = System.currentTimeMillis()
-                                                },
-                                            ),
-                                        contentAlignment = Alignment.Center,
+                                    Row(
+                                        modifier = Modifier.align(Alignment.Center),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(28.dp),
                                     ) {
-                                        Icon(
-                                            imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                            contentDescription = if (state.isPlaying) "Pause" else "Play",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(44.dp),
-                                        )
+                                        // Previous video button
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.playPrevious()
+                                                lastUserInteractionTime = System.currentTimeMillis()
+                                            },
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.Black.copy(alpha = 0.35f)),
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.SkipPrevious,
+                                                contentDescription = "Previous video",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(32.dp),
+                                            )
+                                        }
+
+                                        // Play / Pause button
+                                        Box(
+                                            modifier = Modifier
+                                                .size(64.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.Black.copy(alpha = 0.45f))
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = ripple(bounded = true, radius = 32.dp),
+                                                    onClick = {
+                                                        viewModel.togglePlayPause()
+                                                        lastUserInteractionTime = System.currentTimeMillis()
+                                                    },
+                                                ),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
+                                            Icon(
+                                                imageVector = if (state.isPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                                contentDescription = if (state.isPlaying) "Pause" else "Play",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(44.dp),
+                                            )
+                                        }
+
+                                        // Next video button
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.playNext()
+                                                lastUserInteractionTime = System.currentTimeMillis()
+                                            },
+                                            enabled = queue.isNotEmpty(),
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.Black.copy(alpha = if (queue.isNotEmpty()) 0.35f else 0.15f)),
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.SkipNext,
+                                                contentDescription = "Next video",
+                                                tint = if (queue.isNotEmpty()) Color.White else Color.White.copy(alpha = 0.35f),
+                                                modifier = Modifier.size(32.dp),
+                                            )
+                                        }
                                     }
                                 }
 
@@ -1870,6 +2053,1060 @@ fun PlayerScreen(
                 }
             },
         )
+    }
+
+    // ── Queue Management Bottom Sheet ─────────────────────────────────────────
+    if (showQueueSheet) {
+        QueueBottomSheet(
+            queue = queue,
+            currentPlayback = state.playbackInfo,
+            isPlaying = state.isPlaying,
+            sleepTimer = sleepTimer,
+            onPlayIndex = { index ->
+                viewModel.playQueueIndex(index)
+            },
+            onRemoveIndex = { index ->
+                viewModel.removeQueueItem(index)
+            },
+            onClearQueue = {
+                viewModel.clearQueue()
+            },
+            onShuffleQueue = {
+                viewModel.shuffleQueue()
+            },
+            onOpenSleepTimer = {
+                showSleepTimerDialog = true
+            },
+            onOpenSavePlaylist = {
+                showSavePlaylistDialog = true
+            },
+            onDismiss = {
+                showQueueSheet = false
+            },
+        )
+    }
+
+    // ── Sleep Timer Dialog ────────────────────────────────────────────────────
+    if (showSleepTimerDialog) {
+        SleepTimerDialog(
+            sleepTimer = sleepTimer,
+            onSetMinutes = { minutes ->
+                viewModel.startSleepTimer(minutes)
+                showSleepTimerDialog = false
+            },
+            onSetEndOfVideo = {
+                viewModel.setSleepTimerEndOfVideo()
+                showSleepTimerDialog = false
+            },
+            onCancelTimer = {
+                viewModel.cancelSleepTimer()
+                showSleepTimerDialog = false
+            },
+            onDismiss = {
+                showSleepTimerDialog = false
+            },
+        )
+    }
+
+    // ── Save Queue as Playlist Dialog ─────────────────────────────────────────
+    if (showSavePlaylistDialog) {
+        SaveQueueToPlaylistDialog(
+            currentVideo = state.playbackInfo,
+            queue = queue,
+            existingPlaylists = localPlaylists,
+            onSaveNew = { name, includeCurrent ->
+                viewModel.saveQueueAsNewPlaylist(name, includeCurrent) { savedName ->
+                    val total = (if (includeCurrent && state.playbackInfo != null) 1 else 0) + queue.size
+                    Toast.makeText(context, "Saved $total videos to '$savedName'", Toast.LENGTH_SHORT).show()
+                }
+                showSavePlaylistDialog = false
+            },
+            onSaveExisting = { playlistId, playlistName, includeCurrent ->
+                viewModel.addQueueToExistingPlaylist(playlistId, playlistName, includeCurrent) { savedName ->
+                    val total = (if (includeCurrent && state.playbackInfo != null) 1 else 0) + queue.size
+                    Toast.makeText(context, "Added $total videos to '$savedName'", Toast.LENGTH_SHORT).show()
+                }
+                showSavePlaylistDialog = false
+            },
+            onDismiss = {
+                showSavePlaylistDialog = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun QueueSection(
+    queue: List<PlayQueueItem>,
+    currentPlayback: ResolvedPlaybackInfo?,
+    sleepTimer: SleepTimerInfo,
+    onPlayItem: (Int) -> Unit,
+    onRemoveItem: (Int) -> Unit,
+    onClearQueue: () -> Unit,
+    onShuffleQueue: () -> Unit,
+    onOpenSleepTimer: () -> Unit,
+    onOpenSavePlaylist: () -> Unit,
+    onOpenFullQueue: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .padding(14.dp),
+    ) {
+        // Header
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Default.QueueMusic,
+                contentDescription = null,
+                tint = Brand500,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Up Next in Queue",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Surface(
+                shape = CircleShape,
+                color = Brand500.copy(alpha = 0.2f),
+            ) {
+                Text(
+                    text = "${queue.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Brand500,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            TextButton(onClick = onClearQueue) {
+                Text(
+                    text = "Clear",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.error.copy(alpha = 0.85f),
+                )
+            }
+        }
+
+        // Quick action row: Shuffle, Save as Playlist, Sleep Timer
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // Shuffle
+            Surface(
+                onClick = onShuffleQueue,
+                enabled = queue.size >= 2,
+                shape = RoundedCornerShape(16.dp),
+                color = if (queue.size >= 2) Color.White.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.04f),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Shuffle,
+                        contentDescription = "Shuffle",
+                        modifier = Modifier.size(14.dp),
+                        tint = if (queue.size >= 2) Color.White else Color.White.copy(alpha = 0.35f),
+                    )
+                    Text(
+                        text = "Shuffle",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = if (queue.size >= 2) Color.White else Color.White.copy(alpha = 0.35f),
+                    )
+                }
+            }
+
+            // Save as Playlist
+            val canSavePlaylist = currentPlayback != null || queue.isNotEmpty()
+            Surface(
+                onClick = onOpenSavePlaylist,
+                enabled = canSavePlaylist,
+                shape = RoundedCornerShape(16.dp),
+                color = if (canSavePlaylist) Color.White.copy(alpha = 0.1f) else Color.White.copy(alpha = 0.04f),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlaylistAdd,
+                        contentDescription = "Save Playlist",
+                        modifier = Modifier.size(14.dp),
+                        tint = if (canSavePlaylist) Color.White else Color.White.copy(alpha = 0.35f),
+                    )
+                    Text(
+                        text = "Save",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                        color = if (canSavePlaylist) Color.White else Color.White.copy(alpha = 0.35f),
+                    )
+                }
+            }
+
+            // Sleep Timer
+            val isTimerActive = sleepTimer.isActive
+            Surface(
+                onClick = onOpenSleepTimer,
+                shape = RoundedCornerShape(16.dp),
+                color = if (isTimerActive) Brand500.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.1f),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Bedtime,
+                        contentDescription = "Sleep Timer",
+                        modifier = Modifier.size(14.dp),
+                        tint = if (isTimerActive) Brand500 else Color.White,
+                    )
+                    Text(
+                        text = if (isTimerActive) {
+                            if (sleepTimer.isEndOfVideo) "End of video"
+                            else formatSleepTime(sleepTimer.remainingSeconds)
+                        } else "Timer",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (isTimerActive) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isTimerActive) Brand500 else Color.White,
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(6.dp))
+
+        val previewItems = queue.take(4)
+        previewItems.forEachIndexed { index, item ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onPlayItem(index) }
+                    .padding(vertical = 6.dp, horizontal = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${index + 1}",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.width(22.dp),
+                )
+
+                Box(
+                    modifier = Modifier
+                        .width(72.dp)
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (!item.thumbnailUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = item.thumbnailUrl,
+                            contentDescription = item.title,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                    if (item.durationSeconds > 0) {
+                        Surface(
+                            shape = RoundedCornerShape(3.dp),
+                            color = Color.Black.copy(alpha = 0.75f),
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(2.dp),
+                        ) {
+                            Text(
+                                text = formatTime(item.durationSeconds * 1000L),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 9.sp,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp),
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = item.title,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = item.channelName,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                IconButton(
+                    onClick = { onRemoveItem(index) },
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Remove from queue",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
+        }
+
+        if (queue.size > 4) {
+            Spacer(modifier = Modifier.height(4.dp))
+            TextButton(
+                onClick = onOpenFullQueue,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) {
+                Text(
+                    text = "View all ${queue.size} videos in queue",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Brand500,
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QueueBottomSheet(
+    queue: List<PlayQueueItem>,
+    currentPlayback: ResolvedPlaybackInfo?,
+    isPlaying: Boolean,
+    sleepTimer: SleepTimerInfo,
+    onPlayIndex: (Int) -> Unit,
+    onRemoveIndex: (Int) -> Unit,
+    onClearQueue: () -> Unit,
+    onShuffleQueue: () -> Unit,
+    onOpenSleepTimer: () -> Unit,
+    onOpenSavePlaylist: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        dragHandle = null,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(top = 16.dp, bottom = 8.dp),
+        ) {
+            // Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.QueueMusic,
+                    contentDescription = null,
+                    tint = Brand500,
+                    modifier = Modifier.size(24.dp),
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Play Queue",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (queue.isNotEmpty()) {
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "(${queue.size})",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                if (queue.isNotEmpty()) {
+                    TextButton(onClick = onClearQueue) {
+                        Text(
+                            text = "Clear All",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+
+            // Quick Queue Action Controls: Shuffle, Save as Playlist, Sleep Timer
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // 1. Shuffle Button
+                Surface(
+                    onClick = onShuffleQueue,
+                    enabled = queue.size >= 2,
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (queue.size >= 2) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Shuffle,
+                            contentDescription = "Shuffle",
+                            modifier = Modifier.size(16.dp),
+                            tint = if (queue.size >= 2) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        )
+                        Text(
+                            text = "Shuffle",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = if (queue.size >= 2) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        )
+                    }
+                }
+
+                // 2. Save as Playlist Button
+                val canSavePlaylist = currentPlayback != null || queue.isNotEmpty()
+                Surface(
+                    onClick = onOpenSavePlaylist,
+                    enabled = canSavePlaylist,
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (canSavePlaylist) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlaylistAdd,
+                            contentDescription = "Save as Playlist",
+                            modifier = Modifier.size(16.dp),
+                            tint = if (canSavePlaylist) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        )
+                        Text(
+                            text = "Save as Playlist",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = if (canSavePlaylist) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        )
+                    }
+                }
+
+                // 3. Sleep Timer Button / Chip
+                val isTimerActive = sleepTimer.isActive
+                Surface(
+                    onClick = onOpenSleepTimer,
+                    shape = RoundedCornerShape(20.dp),
+                    color = if (isTimerActive) Brand500.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Bedtime,
+                            contentDescription = "Sleep Timer",
+                            modifier = Modifier.size(16.dp),
+                            tint = if (isTimerActive) Brand500 else MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = if (isTimerActive) {
+                                if (sleepTimer.isEndOfVideo) "End of video"
+                                else formatSleepTime(sleepTimer.remainingSeconds)
+                            } else "Timer",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = if (isTimerActive) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isTimerActive) Brand500 else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                modifier = Modifier.padding(top = 8.dp, bottom = 12.dp),
+            )
+
+            // Now Playing Card
+            if (currentPlayback != null) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                ) {
+                    Text(
+                        text = "NOW PLAYING",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Brand500,
+                        letterSpacing = 1.sp,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Brand500.copy(alpha = 0.08f))
+                            .padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(84.dp)
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (!currentPlayback.thumbnailUrl.isNullOrBlank()) {
+                                AsyncImage(
+                                    model = currentPlayback.thumbnailUrl,
+                                    contentDescription = currentPlayback.title,
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Crop,
+                                )
+                            }
+                            Surface(
+                                shape = CircleShape,
+                                color = Brand500,
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(3.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Audiotrack else Icons.Default.Pause,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .padding(2.dp),
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.width(12.dp))
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = currentPlayback.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = Brand500,
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = currentPlayback.channelName,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            // Up Next List or Empty State
+            if (queue.isEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp, vertical = 36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.QueueMusic,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        modifier = Modifier.size(48.dp),
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Queue is empty",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Tap the three dots (⋮) or long-press any video to 'Play Next' or 'Enqueue'.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            } else {
+                Text(
+                    text = "UP NEXT (${queue.size})",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                )
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp)
+                        .padding(horizontal = 12.dp),
+                ) {
+                    itemsIndexed(queue) { index, item ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    onPlayIndex(index)
+                                    onDismiss()
+                                }
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "${index + 1}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.width(28.dp),
+                            )
+
+                            Box(
+                                modifier = Modifier
+                                    .width(80.dp)
+                                    .height(46.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (!item.thumbnailUrl.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = item.thumbnailUrl,
+                                        contentDescription = item.title,
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                }
+                                if (item.durationSeconds > 0) {
+                                    Surface(
+                                        shape = RoundedCornerShape(3.dp),
+                                        color = Color.Black.copy(alpha = 0.75f),
+                                        modifier = Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(2.dp),
+                                    ) {
+                                        Text(
+                                            text = formatTime(item.durationSeconds * 1000L),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontSize = 9.sp,
+                                            color = Color.White,
+                                            modifier = Modifier.padding(horizontal = 3.dp, vertical = 1.dp),
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = item.channelName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { onRemoveIndex(index) },
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = "Remove from queue",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SleepTimerDialog(
+    sleepTimer: SleepTimerInfo,
+    onSetMinutes: (Int) -> Unit,
+    onSetEndOfVideo: () -> Unit,
+    onCancelTimer: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.Bedtime,
+                contentDescription = null,
+                tint = Brand500,
+                modifier = Modifier.size(28.dp),
+            )
+        },
+        title = {
+            Text(
+                text = "Sleep Timer",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (sleepTimer.isActive) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = Brand500.copy(alpha = 0.12f),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = if (sleepTimer.isEndOfVideo) "Active: Stops at end of video"
+                                else "Active: ${formatSleepTime(sleepTimer.remainingSeconds)} remaining",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Brand500,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(onClick = onCancelTimer) {
+                                Text("Turn Off", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                val options = listOf(
+                    15 to "15 minutes",
+                    30 to "30 minutes",
+                    45 to "45 minutes",
+                    60 to "60 minutes",
+                )
+
+                options.forEach { (mins, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onSetMinutes(mins) }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (sleepTimer.isActive && !sleepTimer.isEndOfVideo && (sleepTimer.remainingSeconds + 59) / 60 == mins.toLong()) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Brand500,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onSetEndOfVideo() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "End of this video",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (sleepTimer.isActive && sleepTimer.isEndOfVideo) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = Brand500,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+@Composable
+private fun SaveQueueToPlaylistDialog(
+    currentVideo: ResolvedPlaybackInfo?,
+    queue: List<PlayQueueItem>,
+    existingPlaylists: List<LocalPlaylistWithCount>,
+    onSaveNew: (name: String, includeCurrent: Boolean) -> Unit,
+    onSaveExisting: (playlistId: String, playlistName: String, includeCurrent: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var newPlaylistName by rememberSaveable { mutableStateOf("") }
+    var includeCurrentVideo by rememberSaveable { mutableStateOf(currentVideo != null) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    val totalVideos = (if (includeCurrentVideo && currentVideo != null) 1 else 0) + queue.size
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.PlaylistAdd,
+                contentDescription = null,
+                tint = Brand500,
+                modifier = Modifier.size(28.dp),
+            )
+        },
+        title = {
+            Text(
+                text = "Save Queue as Playlist",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = "$totalVideos video${if (totalVideos == 1) "" else "s"} will be saved",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                if (currentVideo != null && queue.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { includeCurrentVideo = !includeCurrentVideo }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = if (includeCurrentVideo) Brand500 else MaterialTheme.colorScheme.outlineVariant,
+                            modifier = Modifier.size(18.dp),
+                        ) {
+                            if (includeCurrentVideo) {
+                                Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.padding(2.dp),
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Include currently playing video",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+
+                if (existingPlaylists.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Surface(
+                            onClick = { selectedTab = 0 },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (selectedTab == 0) Brand500.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                text = "New Playlist",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selectedTab == 0) Brand500 else MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 8.dp),
+                            )
+                        }
+                        Surface(
+                            onClick = { selectedTab = 1 },
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (selectedTab == 1) Brand500.copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                text = "Existing (${existingPlaylists.size})",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selectedTab == 1) Brand500 else MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(vertical = 8.dp),
+                            )
+                        }
+                    }
+                }
+
+                if (selectedTab == 0 || existingPlaylists.isEmpty()) {
+                    OutlinedTextField(
+                        value = newPlaylistName,
+                        onValueChange = { newPlaylistName = it },
+                        label = { Text("Playlist Name") },
+                        placeholder = { Text("e.g. My Watch Queue") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        itemsIndexed(existingPlaylists) { _, playlist ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        onSaveExisting(playlist.id, playlist.name, includeCurrentVideo)
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = playlist.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        text = "${playlist.videoCount} videos",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Icon(
+                                    imageVector = Icons.Default.PlaylistAdd,
+                                    contentDescription = null,
+                                    tint = Brand500,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (selectedTab == 0 || existingPlaylists.isEmpty()) {
+                Button(
+                    onClick = {
+                        if (newPlaylistName.isNotBlank()) {
+                            onSaveNew(newPlaylistName.trim(), includeCurrentVideo)
+                        }
+                    },
+                    enabled = newPlaylistName.isNotBlank() && totalVideos > 0,
+                ) {
+                    Text("Save")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
+}
+
+private fun formatSleepTime(seconds: Long): String {
+    val mins = seconds / 60
+    val secs = seconds % 60
+    return if (mins >= 60) {
+        val hrs = mins / 60
+        val remMins = mins % 60
+        "${hrs}h ${remMins}m"
+    } else if (mins > 0) {
+        "${mins}m ${secs}s"
+    } else {
+        "${secs}s"
     }
 }
 

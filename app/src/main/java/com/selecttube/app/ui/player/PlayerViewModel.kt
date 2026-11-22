@@ -4,8 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.repository.ChannelRepository
+import com.selecttube.app.data.repository.LocalPlaylistRepository
 import com.selecttube.app.data.repository.WatchHistoryRepository
 import com.selecttube.app.playback.PlayerManager
+import com.selecttube.app.playback.PlayQueueItem
+import com.selecttube.app.playback.SleepTimerInfo
 import com.selecttube.app.util.PasswordSecurity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
@@ -34,10 +37,15 @@ class PlayerViewModel @Inject constructor(
     val playerManager: PlayerManager,
     private val channelRepository: ChannelRepository,
     private val watchHistoryRepository: WatchHistoryRepository,
+    private val localPlaylistRepository: LocalPlaylistRepository,
 ) : ViewModel() {
 
     val uiState = playerManager.playbackState
     val player = playerManager.player
+    val queue = playerManager.queue
+    val history = playerManager.history
+    val sleepTimer = playerManager.sleepTimer
+    val localPlaylists = localPlaylistRepository.observeAllPlaylists()
 
     private val _isPlayerExpanded = MutableStateFlow(false)
     val isPlayerExpanded: StateFlow<Boolean> = _isPlayerExpanded.asStateFlow()
@@ -229,6 +237,130 @@ class PlayerViewModel @Inject constructor(
 
     fun setBackgroundOnly(enabled: Boolean) {
         playerManager.setBackgroundOnly(enabled)
+    }
+
+    fun playInBackground(
+        urlOrId: String,
+        title: String? = null,
+        channelName: String? = null,
+        thumbnailUrl: String? = null,
+    ) {
+        playerManager.setBackgroundOnly(true)
+        playVideo(urlOrId, title, channelName, thumbnailUrl)
+        _isPlayerExpanded.value = false
+    }
+
+    fun enqueue(item: PlayQueueItem, playNext: Boolean = false) {
+        playerManager.enqueue(item, playNext)
+    }
+
+    fun playQueue(items: List<PlayQueueItem>, startIndex: Int = 0) {
+        _isPlayerExpanded.value = true
+        playerManager.playQueue(items, startIndex)
+    }
+
+    fun playNext() {
+        playerManager.playNextFromQueue()
+    }
+
+    fun playPrevious() {
+        playerManager.playPrevious()
+    }
+
+    fun playQueueIndex(index: Int) {
+        playerManager.playQueueIndex(index)
+    }
+
+    fun playNextFromQueue() {
+        playerManager.playNextFromQueue()
+    }
+
+    fun removeQueueItem(index: Int) {
+        playerManager.removeQueueItem(index)
+    }
+
+    fun clearQueue() {
+        playerManager.clearQueue()
+    }
+
+    fun shuffleQueue() {
+        playerManager.shuffleQueue()
+    }
+
+    fun startSleepTimer(minutes: Int) {
+        playerManager.startSleepTimer(minutes)
+    }
+
+    fun setSleepTimerEndOfVideo() {
+        playerManager.setSleepTimerEndOfVideo()
+    }
+
+    fun cancelSleepTimer() {
+        playerManager.cancelSleepTimer()
+    }
+
+    fun saveQueueAsNewPlaylist(
+        name: String,
+        includeCurrent: Boolean = true,
+        onSuccess: (String) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val trimmed = name.trim()
+            if (trimmed.isBlank()) return@launch
+            val itemsToSave = buildList {
+                if (includeCurrent) {
+                    playerManager.playbackState.value.playbackInfo?.let { curr ->
+                        if (curr.videoId.isNotBlank()) {
+                            add(
+                                PlayQueueItem(
+                                    videoId = curr.videoId,
+                                    title = curr.title,
+                                    channelName = curr.channelName,
+                                    thumbnailUrl = curr.thumbnailUrl,
+                                    durationSeconds = curr.durationSeconds,
+                                )
+                            )
+                        }
+                    }
+                }
+                addAll(playerManager.queue.value)
+            }
+            if (itemsToSave.isEmpty()) return@launch
+            val id = localPlaylistRepository.createPlaylist(trimmed)
+            localPlaylistRepository.addVideosToPlaylist(id, itemsToSave)
+            onSuccess(trimmed)
+        }
+    }
+
+    fun addQueueToExistingPlaylist(
+        playlistId: String,
+        playlistName: String,
+        includeCurrent: Boolean = true,
+        onSuccess: (String) -> Unit = {},
+    ) {
+        viewModelScope.launch {
+            val itemsToSave = buildList {
+                if (includeCurrent) {
+                    playerManager.playbackState.value.playbackInfo?.let { curr ->
+                        if (curr.videoId.isNotBlank()) {
+                            add(
+                                PlayQueueItem(
+                                    videoId = curr.videoId,
+                                    title = curr.title,
+                                    channelName = curr.channelName,
+                                    thumbnailUrl = curr.thumbnailUrl,
+                                    durationSeconds = curr.durationSeconds,
+                                )
+                            )
+                        }
+                    }
+                }
+                addAll(playerManager.queue.value)
+            }
+            if (itemsToSave.isEmpty()) return@launch
+            localPlaylistRepository.addVideosToPlaylist(playlistId, itemsToSave)
+            onSuccess(playlistName)
+        }
     }
 
     fun resumeFromBackground() {

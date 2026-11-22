@@ -426,14 +426,20 @@ class StreamResolver @Inject constructor() {
 
     private fun normalizeToWatchUrl(input: String): String {
         val trimmed = input.trim()
-        return when {
-            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
-            else -> "https://www.youtube.com/watch?v=$trimmed"
-        }
+        val videoId = extractVideoId(trimmed)
+        return "https://www.youtube.com/watch?v=$videoId"
     }
 
     private fun extractVideoId(url: String): String {
-        return url.substringAfterLast("v=").substringBefore("&")
-            .ifBlank { url.substringAfterLast("/") }
+        val clean = url.trim()
+        return when {
+            clean.contains("v=") -> clean.substringAfter("v=").substringBefore("&")
+            clean.contains("/shorts/") -> clean.substringAfter("/shorts/").substringBefore("?").substringBefore("/")
+            clean.contains("/embed/") -> clean.substringAfter("/embed/").substringBefore("?").substringBefore("/")
+            clean.contains("youtu.be/") -> clean.substringAfter("youtu.be/").substringBefore("?").substringBefore("/")
+            clean.startsWith("/watch") || clean.startsWith("watch") -> clean.substringAfter("v=").substringBefore("&")
+            clean.startsWith("http://") || clean.startsWith("https://") -> clean.substringAfterLast("/").substringBefore("?")
+            else -> clean.substringAfterLast("/").substringBefore("?")
+        }.ifBlank { clean }
     }
 }
