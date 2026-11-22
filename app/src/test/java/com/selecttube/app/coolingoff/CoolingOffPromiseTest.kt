@@ -1,7 +1,7 @@
 package com.selecttube.app.coolingoff
 
+import com.selecttube.app.config.ChannelConfig
 import com.selecttube.app.data.db.ChannelEntity
-import com.selecttube.app.data.model.ChannelConfig
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
