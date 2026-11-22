@@ -1,7 +1,8 @@
 package com.selecttube.app.ui.feed
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material3.AlertDialog
@@ -52,14 +54,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.selecttube.app.data.db.WatchHistoryEntity
+import com.selecttube.app.ui.common.VideoActionTarget
 import java.util.concurrent.TimeUnit
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun RecentsView(
     history: List<WatchHistoryEntity>,
     onVideoClick: (WatchHistoryEntity) -> Unit,
     onDeleteItem: (String) -> Unit,
     onClearHistory: () -> Unit,
+    onMoreOptions: ((VideoActionTarget) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     var showClearConfirmation by remember { mutableStateOf(false) }
@@ -152,6 +157,7 @@ fun RecentsView(
                     item = item,
                     onClick = { onVideoClick(item) },
                     onDelete = { onDeleteItem(item.videoId) },
+                    onMoreOptions = onMoreOptions,
                 )
                 HorizontalDivider(
                     modifier = Modifier.padding(horizontal = 12.dp),
@@ -162,21 +168,37 @@ fun RecentsView(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun RecentsItem(
     item: WatchHistoryEntity,
     onClick: () -> Unit,
     onDelete: () -> Unit,
+    onMoreOptions: ((VideoActionTarget) -> Unit)? = null,
 ) {
     val totalMs = item.durationSeconds * 1000L
     val progress = if (totalMs > 0L) {
         (item.lastPositionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
     } else 0f
 
+    val target = remember(item) {
+        VideoActionTarget(
+            videoId = item.videoId,
+            title = item.title,
+            channelName = item.channelName,
+            channelId = item.channelId,
+            thumbnailUrl = item.thumbnailUrl,
+            durationSeconds = item.durationSeconds,
+        )
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = { onMoreOptions?.invoke(target) },
+            )
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -287,6 +309,20 @@ private fun RecentsItem(
                         )
                     }
                 }
+            }
+        }
+
+        if (onMoreOptions != null) {
+            IconButton(
+                onClick = { onMoreOptions(target) },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "More options",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
 

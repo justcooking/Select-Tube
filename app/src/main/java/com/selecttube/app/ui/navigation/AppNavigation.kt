@@ -46,13 +46,16 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.compose.AsyncImage
 import com.selecttube.app.data.preferences.AppMode
+import com.selecttube.app.playback.PlayQueueItem
 import com.selecttube.app.ui.addchannel.AddChannelScreen
 import com.selecttube.app.ui.addplaylist.AddPlaylistScreen
 import com.selecttube.app.ui.channel.ChannelScreen
+import com.selecttube.app.ui.common.VideoActionTarget
 import com.selecttube.app.ui.feed.FeedScreen
 import com.selecttube.app.ui.onboarding.OnboardingScreen
 import com.selecttube.app.ui.player.PlayerScreen
 import com.selecttube.app.ui.player.PlayerViewModel
+import com.selecttube.app.ui.playlist.LocalPlaylistScreen
 import com.selecttube.app.ui.playlist.PlaylistScreen
 import com.selecttube.app.ui.search.SearchScreen
 import com.selecttube.app.ui.settings.SettingsScreen
@@ -130,12 +133,44 @@ fun AppNavigation(
                         onOpenSearch = { navController.navigate(Screen.Search.route) },
                         onVideoClick = { video ->
                             playerViewModel.playVideo(
-                                urlOrId = video.url.ifBlank { video.videoId },
+                                urlOrId = video.videoId.ifBlank { video.url },
                                 title = video.title,
                                 channelName = video.channelName,
                                 thumbnailUrl = video.thumbnailUrl,
                             )
                             playerViewModel.expandPlayer()
+                        },
+                        onPlayBackground = { target ->
+                            playerViewModel.playInBackground(
+                                urlOrId = target.videoId,
+                                title = target.title,
+                                channelName = target.channelName,
+                                thumbnailUrl = target.thumbnailUrl,
+                            )
+                        },
+                        onPlayNext = { target ->
+                            playerViewModel.enqueue(
+                                PlayQueueItem(
+                                    videoId = target.videoId,
+                                    title = target.title,
+                                    channelName = target.channelName,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    durationSeconds = target.durationSeconds,
+                                ),
+                                playNext = true,
+                            )
+                        },
+                        onEnqueue = { target ->
+                            playerViewModel.enqueue(
+                                PlayQueueItem(
+                                    videoId = target.videoId,
+                                    title = target.title,
+                                    channelName = target.channelName,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    durationSeconds = target.durationSeconds,
+                                ),
+                                playNext = false,
+                            )
                         },
                         onRecentVideoClick = { recent ->
                             playerViewModel.playVideo(
@@ -151,7 +186,12 @@ fun AppNavigation(
                             playerViewModel.collapsePlayer()
                             navController.navigate(Screen.Playlist.createRoute(playlist.playlistId, playlist.name))
                         },
+                        onLocalPlaylistClick = { localPlaylist ->
+                            playerViewModel.collapsePlayer()
+                            navController.navigate(Screen.LocalPlaylist.createRoute(localPlaylist.id, localPlaylist.name))
+                        },
                         onAddPlaylist = { navController.navigate(Screen.AddPlaylist.route) },
+                        isCurrentlyPlaying = hasVideo,
                     )
                 }
 
@@ -160,17 +200,50 @@ fun AppNavigation(
                         onNavigateBack = { navController.popBackStack() },
                         onVideoClick = { video ->
                             playerViewModel.playVideo(
-                                urlOrId = video.url.ifBlank { video.videoId },
+                                urlOrId = video.videoId.ifBlank { video.url },
                                 title = video.title,
                                 channelName = video.channelName,
                                 thumbnailUrl = video.thumbnailUrl,
                             )
                             playerViewModel.expandPlayer()
                         },
+                        onPlayBackground = { target ->
+                            playerViewModel.playInBackground(
+                                urlOrId = target.videoId,
+                                title = target.title,
+                                channelName = target.channelName,
+                                thumbnailUrl = target.thumbnailUrl,
+                            )
+                        },
+                        onPlayNext = { target ->
+                            playerViewModel.enqueue(
+                                PlayQueueItem(
+                                    videoId = target.videoId,
+                                    title = target.title,
+                                    channelName = target.channelName,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    durationSeconds = target.durationSeconds,
+                                ),
+                                playNext = true,
+                            )
+                        },
+                        onEnqueue = { target ->
+                            playerViewModel.enqueue(
+                                PlayQueueItem(
+                                    videoId = target.videoId,
+                                    title = target.title,
+                                    channelName = target.channelName,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    durationSeconds = target.durationSeconds,
+                                ),
+                                playNext = false,
+                            )
+                        },
                         onChannelClick = { channelId, channelName ->
                             playerViewModel.collapsePlayer()
                             navController.navigate(Screen.Channel.createRoute(channelId, channelName))
                         },
+                        isCurrentlyPlaying = hasVideo,
                     )
                 }
 
@@ -215,12 +288,80 @@ fun AppNavigation(
                         onNavigateBack = { navController.popBackStack() },
                         onVideoClick = { video ->
                             playerViewModel.playVideo(
-                                urlOrId = video.url.ifBlank { video.videoId },
+                                urlOrId = video.videoId.ifBlank { video.url },
                                 title = video.title,
                                 channelName = video.channelName,
                                 thumbnailUrl = video.thumbnailUrl,
                             )
                             playerViewModel.expandPlayer()
+                        },
+                        onPlayBackground = { target ->
+                            playerViewModel.playInBackground(
+                                urlOrId = target.videoId,
+                                title = target.title,
+                                channelName = target.channelName,
+                                thumbnailUrl = target.thumbnailUrl,
+                            )
+                        },
+                        onPlayNext = { target ->
+                            playerViewModel.enqueue(
+                                PlayQueueItem(
+                                    videoId = target.videoId,
+                                    title = target.title,
+                                    channelName = target.channelName,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    durationSeconds = target.durationSeconds,
+                                ),
+                                playNext = true,
+                            )
+                        },
+                        onEnqueue = { target ->
+                            playerViewModel.enqueue(
+                                PlayQueueItem(
+                                    videoId = target.videoId,
+                                    title = target.title,
+                                    channelName = target.channelName,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    durationSeconds = target.durationSeconds,
+                                ),
+                                playNext = false,
+                            )
+                        },
+                        isCurrentlyPlaying = hasVideo,
+                    )
+                }
+
+                composable(
+                    route = Screen.LocalPlaylist.route,
+                    arguments = listOf(
+                        navArgument("playlistId") { type = NavType.StringType },
+                        navArgument("name") {
+                            type = NavType.StringType
+                            defaultValue = ""
+                        },
+                    ),
+                ) {
+                    LocalPlaylistScreen(
+                        onNavigateBack = { navController.popBackStack() },
+                        onPlayVideo = { videoId, title, channelName, thumbnailUrl ->
+                            playerViewModel.playVideo(
+                                urlOrId = videoId,
+                                title = title,
+                                channelName = channelName,
+                                thumbnailUrl = thumbnailUrl,
+                            )
+                            playerViewModel.expandPlayer()
+                        },
+                        onPlayAll = { queueItems ->
+                            playerViewModel.playQueue(queueItems, startIndex = 0)
+                        },
+                        onPlayBackground = { videoId, title, channelName, thumbnailUrl ->
+                            playerViewModel.playInBackground(
+                                urlOrId = videoId,
+                                title = title,
+                                channelName = channelName,
+                                thumbnailUrl = thumbnailUrl,
+                            )
                         },
                     )
                 }
@@ -239,17 +380,50 @@ fun AppNavigation(
                         onNavigateBack = { navController.popBackStack() },
                         onVideoClick = { video ->
                             playerViewModel.playVideo(
-                                urlOrId = video.url.ifBlank { video.videoId },
+                                urlOrId = video.videoId.ifBlank { video.url },
                                 title = video.title,
                                 channelName = video.channelName,
                                 thumbnailUrl = video.thumbnailUrl,
                             )
                             playerViewModel.expandPlayer()
                         },
+                        onPlayBackground = { target ->
+                            playerViewModel.playInBackground(
+                                urlOrId = target.videoId,
+                                title = target.title,
+                                channelName = target.channelName,
+                                thumbnailUrl = target.thumbnailUrl,
+                            )
+                        },
+                        onPlayNext = { target ->
+                            playerViewModel.enqueue(
+                                PlayQueueItem(
+                                    videoId = target.videoId,
+                                    title = target.title,
+                                    channelName = target.channelName,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    durationSeconds = target.durationSeconds,
+                                ),
+                                playNext = true,
+                            )
+                        },
+                        onEnqueue = { target ->
+                            playerViewModel.enqueue(
+                                PlayQueueItem(
+                                    videoId = target.videoId,
+                                    title = target.title,
+                                    channelName = target.channelName,
+                                    thumbnailUrl = target.thumbnailUrl,
+                                    durationSeconds = target.durationSeconds,
+                                ),
+                                playNext = false,
+                            )
+                        },
                         onPlaylistClick = { playlist ->
                             playerViewModel.collapsePlayer()
                             navController.navigate(Screen.Playlist.createRoute(playlist.playlistId, playlist.name))
                         },
+                        isCurrentlyPlaying = hasVideo,
                     )
                 }
             }

@@ -2,9 +2,11 @@ package com.selecttube.app.ui.channel
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +32,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.Visibility
@@ -64,6 +67,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -85,6 +89,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.selecttube.app.data.youtube.ResolvedPlaylist
 import com.selecttube.app.data.youtube.VideoFeedItem
+import com.selecttube.app.ui.common.AddToPlaylistSheet
+import com.selecttube.app.ui.common.VideoActionBottomSheet
+import com.selecttube.app.ui.common.VideoActionTarget
 import com.selecttube.app.ui.theme.Brand500
 import com.selecttube.app.ui.theme.Brand700
 import com.selecttube.app.ui.theme.Brand900
@@ -102,10 +109,30 @@ fun ChannelScreen(
     onNavigateBack: () -> Unit,
     onVideoClick: (VideoFeedItem) -> Unit,
     onPlaylistClick: (ResolvedPlaylist) -> Unit = {},
+    onPlayBackground: (VideoActionTarget) -> Unit = {},
+    onPlayNext: (VideoActionTarget) -> Unit = {},
+    onEnqueue: (VideoActionTarget) -> Unit = {},
+    isCurrentlyPlaying: Boolean = false,
     viewModel: ChannelViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val localPlaylists by viewModel.localPlaylists.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+
+    var activeActionTarget by remember { mutableStateOf<VideoActionTarget?>(null) }
+    var activeAddToPlaylistTarget by remember { mutableStateOf<VideoActionTarget?>(null) }
+
+    val assignedPlaylistIds by produceState<List<String>>(
+        initialValue = emptyList(),
+        key1 = activeAddToPlaylistTarget?.videoId,
+    ) {
+        val targetId = activeAddToPlaylistTarget?.videoId
+        if (targetId != null) {
+            viewModel.observeAssignedPlaylistsForVideo(targetId).collect { value = it }
+        } else {
+            value = emptyList()
+        }
+    }
 
     // Infinite scrolling pagination: load more when user scrolls near the end
     val shouldLoadMore by remember {
@@ -120,6 +147,62 @@ fun ChannelScreen(
         if (shouldLoadMore && state.hasNextPage && !state.isLoadingMore) {
             viewModel.loadMoreVideos()
         }
+    }
+
+    activeActionTarget?.let { target ->
+        VideoActionBottomSheet(
+            video = target,
+            isCurrentlyPlaying = isCurrentlyPlaying,
+            onDismiss = { activeActionTarget = null },
+            onPlayInPlayer = {
+                activeActionTarget = null
+                onVideoClick(
+                    VideoFeedItem(
+                        videoId = target.videoId,
+                        title = target.title,
+                        channelName = target.channelName,
+                        channelId = target.channelId,
+                        thumbnailUrl = target.thumbnailUrl,
+                        uploadDateText = null,
+                        uploadTimestamp = 0L,
+                        durationSeconds = target.durationSeconds,
+                        url = target.videoId,
+                    )
+                )
+            },
+            onPlayInBackground = {
+                activeActionTarget = null
+                onPlayBackground(target)
+            },
+            onPlayNext = {
+                activeActionTarget = null
+                onPlayNext(target)
+            },
+            onEnqueue = {
+                activeActionTarget = null
+                onEnqueue(target)
+            },
+            onAddToPlaylist = {
+                val savedTarget = target
+                activeActionTarget = null
+                activeAddToPlaylistTarget = savedTarget
+            },
+        )
+    }
+
+    activeAddToPlaylistTarget?.let { target ->
+        AddToPlaylistSheet(
+            video = target,
+            playlists = localPlaylists,
+            assignedPlaylistIds = assignedPlaylistIds.toSet(),
+            onTogglePlaylist = { playlistId ->
+                viewModel.toggleVideoInLocalPlaylist(playlistId, target)
+            },
+            onCreatePlaylist = { name ->
+                viewModel.createLocalPlaylist(name, target)
+            },
+            onDismiss = { activeAddToPlaylistTarget = null },
+        )
     }
 
     Scaffold(
@@ -781,11 +864,23 @@ fun ChannelScreen(
                                                 Spacer(modifier = Modifier.height(8.dp))
                                             }
 
-                                            items(state.videos, key = { it.url.ifBlank { it.videoId } }) { video ->
+                                            items(state.videos, key = { it.videoId.ifBlank { it.url } }) { video ->
+                                                val videoKey = video.videoId.ifBlank { video.url }
+                                                val target = remember(video) {
+                                                    VideoActionTarget(
+                                                        videoId = videoKey,
+                                                        title = video.title,
+                                                        channelName = video.channelName,
+                                                        channelId = video.channelId.orEmpty(),
+                                                        thumbnailUrl = video.thumbnailUrl,
+                                                        durationSeconds = video.durationSeconds,
+                                                    )
+                                                }
                                                 ChannelWidescreenVideoItem(
                                                     video = video,
                                                     isLiveTab = state.selectedCategory == ChannelCategory.LIVESTREAMS,
                                                     onClick = { onVideoClick(video) },
+                                                    onMoreOptions = { activeActionTarget = target },
                                                 )
                                             }
                                         }
@@ -1044,16 +1139,21 @@ private fun ShortGridItem(
 /**
  * YouTube-style 16:9 widescreen video card for Videos & Live tabs.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChannelWidescreenVideoItem(
     video: VideoFeedItem,
     isLiveTab: Boolean,
     onClick: () -> Unit,
+    onMoreOptions: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onMoreOptions,
+            )
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         // Thumbnail Box (16:9 with rounded corners)
@@ -1121,24 +1221,44 @@ private fun ChannelWidescreenVideoItem(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Title & Metadata
-        Text(
-            text = video.title,
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = Color.White,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            lineHeight = 20.sp,
-        )
+        // Title, Metadata & 3-dots button
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = video.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 20.sp,
+                )
 
-        if (!video.uploadDateText.isNullOrBlank()) {
-            Spacer(modifier = Modifier.height(3.dp))
-            Text(
-                text = video.uploadDateText,
-                style = MaterialTheme.typography.bodySmall,
-                color = YouTubeSecondaryText,
-            )
+                if (!video.uploadDateText.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = video.uploadDateText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = YouTubeSecondaryText,
+                    )
+                }
+            }
+
+            IconButton(
+                onClick = onMoreOptions,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "More options",
+                    tint = YouTubeSecondaryText,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }

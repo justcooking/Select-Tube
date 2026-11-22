@@ -2,9 +2,11 @@ package com.selecttube.app.ui.feed
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.selecttube.app.data.db.LocalPlaylistWithCount
 import com.selecttube.app.data.db.WatchHistoryEntity
 import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.repository.ChannelRepository
+import com.selecttube.app.data.repository.LocalPlaylistRepository
 import com.selecttube.app.data.repository.WatchHistoryRepository
 import com.selecttube.app.data.update.AppReleaseInfo
 import com.selecttube.app.data.update.AppUpdateManager
@@ -12,6 +14,7 @@ import com.selecttube.app.data.update.UpdateState
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.data.youtube.YouTubeRepository
 import com.selecttube.app.domain.Channel
+import com.selecttube.app.ui.common.VideoActionTarget
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -56,7 +59,12 @@ class FeedViewModel @Inject constructor(
     private val youTubeRepository: YouTubeRepository,
     private val appUpdateManager: AppUpdateManager,
     private val watchHistoryRepository: WatchHistoryRepository,
+    private val localPlaylistRepository: LocalPlaylistRepository,
 ) : ViewModel() {
+
+    val localPlaylists: StateFlow<List<LocalPlaylistWithCount>> = localPlaylistRepository
+        .observeAllPlaylists()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     private val _uiState = MutableStateFlow(FeedUiState())
     val uiState: StateFlow<FeedUiState> = _uiState.asStateFlow()
@@ -287,6 +295,47 @@ class FeedViewModel @Inject constructor(
     fun clearWatchHistory() {
         viewModelScope.launch {
             watchHistoryRepository.clearHistory()
+        }
+    }
+
+    // ── Local Playlist Operations ─────────────────────────────────────────────
+    fun createLocalPlaylist(name: String, initialVideo: VideoActionTarget? = null) {
+        viewModelScope.launch {
+            val id = localPlaylistRepository.createPlaylist(name)
+            if (initialVideo != null) {
+                localPlaylistRepository.addVideoToPlaylist(
+                    playlistId = id,
+                    videoId = initialVideo.videoId,
+                    title = initialVideo.title,
+                    channelName = initialVideo.channelName,
+                    channelId = initialVideo.channelId,
+                    thumbnailUrl = initialVideo.thumbnailUrl,
+                    durationSeconds = initialVideo.durationSeconds,
+                )
+            }
+        }
+    }
+
+    fun toggleVideoInLocalPlaylist(playlistId: String, video: VideoActionTarget) {
+        viewModelScope.launch {
+            localPlaylistRepository.toggleVideoInPlaylist(
+                playlistId = playlistId,
+                videoId = video.videoId,
+                title = video.title,
+                channelName = video.channelName,
+                channelId = video.channelId,
+                thumbnailUrl = video.thumbnailUrl,
+                durationSeconds = video.durationSeconds,
+            )
+        }
+    }
+
+    fun observeAssignedPlaylistsForVideo(videoId: String): kotlinx.coroutines.flow.Flow<List<String>> =
+        localPlaylistRepository.observePlaylistIdsForVideo(videoId)
+
+    fun deleteLocalPlaylist(playlistId: String) {
+        viewModelScope.launch {
+            localPlaylistRepository.deletePlaylist(playlistId)
         }
     }
 }

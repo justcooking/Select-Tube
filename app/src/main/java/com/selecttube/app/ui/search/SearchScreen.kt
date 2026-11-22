@@ -1,8 +1,10 @@
 package com.selecttube.app.ui.search
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -28,6 +30,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SearchOff
@@ -46,7 +49,10 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -68,6 +74,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.domain.Channel
+import com.selecttube.app.ui.common.AddToPlaylistSheet
+import com.selecttube.app.ui.common.VideoActionBottomSheet
+import com.selecttube.app.ui.common.VideoActionTarget
 import com.selecttube.app.ui.theme.Brand500
 import com.selecttube.app.ui.theme.Brand700
 import com.selecttube.app.ui.theme.Brand900
@@ -78,14 +87,90 @@ fun SearchScreen(
     onNavigateBack: () -> Unit,
     onVideoClick: (VideoFeedItem) -> Unit,
     onChannelClick: (String, String) -> Unit,
+    onPlayBackground: (VideoActionTarget) -> Unit = {},
+    onPlayNext: (VideoActionTarget) -> Unit = {},
+    onEnqueue: (VideoActionTarget) -> Unit = {},
+    isCurrentlyPlaying: Boolean = false,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val localPlaylists by viewModel.localPlaylists.collectAsStateWithLifecycle()
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
+    var activeActionTarget by remember { mutableStateOf<VideoActionTarget?>(null) }
+    var activeAddToPlaylistTarget by remember { mutableStateOf<VideoActionTarget?>(null) }
+
+    val assignedPlaylistIds by produceState<List<String>>(
+        initialValue = emptyList(),
+        key1 = activeAddToPlaylistTarget?.videoId,
+    ) {
+        val targetId = activeAddToPlaylistTarget?.videoId
+        if (targetId != null) {
+            viewModel.observeAssignedPlaylistsForVideo(targetId).collect { value = it }
+        } else {
+            value = emptyList()
+        }
+    }
+
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
+    }
+
+    activeActionTarget?.let { target ->
+        VideoActionBottomSheet(
+            video = target,
+            isCurrentlyPlaying = isCurrentlyPlaying,
+            onDismiss = { activeActionTarget = null },
+            onPlayInPlayer = {
+                activeActionTarget = null
+                onVideoClick(
+                    VideoFeedItem(
+                        videoId = target.videoId,
+                        title = target.title,
+                        channelName = target.channelName,
+                        channelId = target.channelId,
+                        thumbnailUrl = target.thumbnailUrl,
+                        uploadDateText = null,
+                        uploadTimestamp = 0L,
+                        durationSeconds = target.durationSeconds,
+                        url = target.videoId,
+                    )
+                )
+            },
+            onPlayInBackground = {
+                activeActionTarget = null
+                onPlayBackground(target)
+            },
+            onPlayNext = {
+                activeActionTarget = null
+                onPlayNext(target)
+            },
+            onEnqueue = {
+                activeActionTarget = null
+                onEnqueue(target)
+            },
+            onAddToPlaylist = {
+                val savedTarget = target
+                activeActionTarget = null
+                activeAddToPlaylistTarget = savedTarget
+            },
+        )
+    }
+
+    activeAddToPlaylistTarget?.let { target ->
+        AddToPlaylistSheet(
+            video = target,
+            playlists = localPlaylists,
+            assignedPlaylistIds = assignedPlaylistIds.toSet(),
+            onTogglePlaylist = { playlistId ->
+                viewModel.toggleVideoInLocalPlaylist(playlistId, target)
+            },
+            onCreatePlaylist = { name ->
+                viewModel.createLocalPlaylist(name, target)
+            },
+            onDismiss = { activeAddToPlaylistTarget = null },
+        )
     }
 
     Scaffold(
@@ -339,12 +424,23 @@ fun SearchScreen(
                             }
 
                             items(state.results, key = { it.videoId }) { video ->
+                                val target = remember(video) {
+                                    VideoActionTarget(
+                                        videoId = video.videoId.ifBlank { video.url },
+                                        title = video.title,
+                                        channelName = video.channelName,
+                                        channelId = video.channelId.orEmpty(),
+                                        thumbnailUrl = video.thumbnailUrl,
+                                        durationSeconds = video.durationSeconds,
+                                    )
+                                }
                                 SearchResultCard(
                                     video = video,
                                     onVideoClick = { onVideoClick(video) },
                                     onChannelClick = {
                                         onChannelClick(video.channelId, video.channelName)
                                     },
+                                    onMoreOptions = { activeActionTarget = target },
                                 )
                             }
                         }
@@ -440,16 +536,21 @@ private fun FilterChipItem(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SearchResultCard(
     video: VideoFeedItem,
     onVideoClick: () -> Unit,
     onChannelClick: () -> Unit,
+    onMoreOptions: () -> Unit,
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onVideoClick)
+            .combinedClickable(
+                onClick = onVideoClick,
+                onLongClick = onMoreOptions,
+            )
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         // 16:9 Thumbnail Box
@@ -503,7 +604,7 @@ private fun SearchResultCard(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Metadata row (Channel avatar on left, Title & subtitle on right)
+        // Metadata row (Channel avatar on left, Title & subtitle in center, 3-dots on right)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Top,
@@ -577,6 +678,18 @@ private fun SearchResultCard(
                         )
                     }
                 }
+            }
+
+            IconButton(
+                onClick = onMoreOptions,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "More options",
+                    tint = Color(0xFFAAAAAA),
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }

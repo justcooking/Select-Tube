@@ -4,20 +4,25 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.selecttube.app.config.ChannelConfig
+import com.selecttube.app.data.db.LocalPlaylistWithCount
 import com.selecttube.app.data.db.PlaylistEntity
 import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.repository.ChannelRepository
+import com.selecttube.app.data.repository.LocalPlaylistRepository
 import com.selecttube.app.data.youtube.ResolvedPlaylist
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.data.youtube.YouTubeRepository
+import com.selecttube.app.ui.common.VideoActionTarget
 import com.selecttube.app.util.PasswordSecurity
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.net.URLDecoder
@@ -45,7 +50,46 @@ class PlaylistViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     private val youTubeRepository: YouTubeRepository,
     private val channelRepository: ChannelRepository,
+    private val localPlaylistRepository: LocalPlaylistRepository,
 ) : ViewModel() {
+
+    val localPlaylists: StateFlow<List<LocalPlaylistWithCount>> = localPlaylistRepository
+        .observeAllPlaylists()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun createLocalPlaylist(name: String, initialVideo: VideoActionTarget? = null) {
+        viewModelScope.launch {
+            val id = localPlaylistRepository.createPlaylist(name)
+            if (initialVideo != null) {
+                localPlaylistRepository.addVideoToPlaylist(
+                    playlistId = id,
+                    videoId = initialVideo.videoId,
+                    title = initialVideo.title,
+                    channelName = initialVideo.channelName,
+                    channelId = initialVideo.channelId,
+                    thumbnailUrl = initialVideo.thumbnailUrl,
+                    durationSeconds = initialVideo.durationSeconds,
+                )
+            }
+        }
+    }
+
+    fun toggleVideoInLocalPlaylist(playlistId: String, video: VideoActionTarget) {
+        viewModelScope.launch {
+            localPlaylistRepository.toggleVideoInPlaylist(
+                playlistId = playlistId,
+                videoId = video.videoId,
+                title = video.title,
+                channelName = video.channelName,
+                channelId = video.channelId,
+                thumbnailUrl = video.thumbnailUrl,
+                durationSeconds = video.durationSeconds,
+            )
+        }
+    }
+
+    fun observeAssignedPlaylistsForVideo(videoId: String) =
+        localPlaylistRepository.observePlaylistIdsForVideo(videoId)
 
     val playlistIdParam: String = try {
         val raw = savedStateHandle.get<String>("playlistId").orEmpty()

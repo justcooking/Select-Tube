@@ -22,34 +22,47 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayCircleOutline
 import androidx.compose.material.icons.filled.PlaylistPlay
+import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -65,8 +78,13 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.selecttube.app.data.db.LocalPlaylistWithCount
 import com.selecttube.app.data.db.WatchHistoryEntity
 import com.selecttube.app.data.youtube.VideoFeedItem
+import com.selecttube.app.ui.common.AddToPlaylistSheet
+import com.selecttube.app.ui.common.VideoActionBottomSheet
+import com.selecttube.app.ui.common.VideoActionTarget
+import com.selecttube.app.ui.common.VideoItemCard
 import com.selecttube.app.ui.update.UpdateDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -77,13 +95,44 @@ fun FeedScreen(
     onVideoClick: (VideoFeedItem) -> Unit = {},
     onRecentVideoClick: (WatchHistoryEntity) -> Unit = {},
     onPlaylistClick: (PlaylistItemUiState) -> Unit = {},
+    onLocalPlaylistClick: (LocalPlaylistWithCount) -> Unit = {},
+    onPlayBackground: (VideoActionTarget) -> Unit = {},
+    onPlayNext: (VideoActionTarget) -> Unit = {},
+    onEnqueue: (VideoActionTarget) -> Unit = {},
     onAddPlaylist: () -> Unit = {},
+    isCurrentlyPlaying: Boolean = false,
     viewModel: FeedViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val updateState by viewModel.updateState.collectAsStateWithLifecycle()
     val watchHistory by viewModel.watchHistory.collectAsStateWithLifecycle()
+    val localPlaylists by viewModel.localPlaylists.collectAsStateWithLifecycle()
     var selectedFeedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    var activeActionTarget by remember { mutableStateOf<VideoActionTarget?>(null) }
+    var activeAddToPlaylistTarget by remember { mutableStateOf<VideoActionTarget?>(null) }
+    var showCreateLocalPlaylistDialog by remember { mutableStateOf(false) }
+    var newLocalPlaylistName by remember { mutableStateOf("") }
+
+    val assignedPlaylistIds by produceState<List<String>>(
+        initialValue = emptyList(),
+        key1 = activeAddToPlaylistTarget?.videoId,
+    ) {
+        val targetId = activeAddToPlaylistTarget?.videoId
+        if (targetId != null) {
+            viewModel.observeAssignedPlaylistsForVideo(targetId).collect { value = it }
+        } else {
+            value = emptyList()
+        }
+    }
+
+    val watchProgressMap = remember(watchHistory) {
+        watchHistory.associate { item ->
+            val totalMs = item.durationSeconds * 1000L
+            val prog = if (totalMs > 0L) (item.lastPositionMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f) else 0f
+            item.videoId to prog
+        }
+    }
 
     UpdateDialog(
         state = updateState,
@@ -92,6 +141,108 @@ fun FeedScreen(
         onInstall = viewModel::installUpdate,
         onRetry = viewModel::retryUpdate,
     )
+
+    if (showCreateLocalPlaylistDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showCreateLocalPlaylistDialog = false
+                newLocalPlaylistName = ""
+            },
+            title = { Text("New Playlist") },
+            text = {
+                OutlinedTextField(
+                    value = newLocalPlaylistName,
+                    onValueChange = { newLocalPlaylistName = it },
+                    label = { Text("Playlist name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val name = newLocalPlaylistName.trim()
+                        if (name.isNotBlank()) {
+                            viewModel.createLocalPlaylist(name)
+                            newLocalPlaylistName = ""
+                            showCreateLocalPlaylistDialog = false
+                        }
+                    },
+                    enabled = newLocalPlaylistName.isNotBlank(),
+                ) {
+                    Text("Create")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showCreateLocalPlaylistDialog = false
+                        newLocalPlaylistName = ""
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    activeActionTarget?.let { target ->
+        VideoActionBottomSheet(
+            video = target,
+            isCurrentlyPlaying = isCurrentlyPlaying,
+            onDismiss = { activeActionTarget = null },
+            onPlayInPlayer = {
+                activeActionTarget = null
+                onVideoClick(
+                    VideoFeedItem(
+                        videoId = target.videoId,
+                        title = target.title,
+                        channelName = target.channelName,
+                        channelId = target.channelId,
+                        thumbnailUrl = target.thumbnailUrl,
+                        uploadDateText = null,
+                        uploadTimestamp = 0L,
+                        durationSeconds = target.durationSeconds,
+                        url = target.videoId,
+                    )
+                )
+            },
+            onPlayInBackground = {
+                activeActionTarget = null
+                onPlayBackground(target)
+            },
+            onPlayNext = {
+                activeActionTarget = null
+                onPlayNext(target)
+            },
+            onEnqueue = {
+                activeActionTarget = null
+                onEnqueue(target)
+            },
+            onAddToPlaylist = {
+                val savedTarget = target
+                activeActionTarget = null
+                activeAddToPlaylistTarget = savedTarget
+            },
+        )
+    }
+
+    activeAddToPlaylistTarget?.let { target ->
+        AddToPlaylistSheet(
+            video = target,
+            playlists = localPlaylists,
+            assignedPlaylistIds = assignedPlaylistIds.toSet(),
+            onTogglePlaylist = { playlistId ->
+                viewModel.toggleVideoInLocalPlaylist(playlistId, target)
+            },
+            onCreatePlaylist = { name ->
+                viewModel.createLocalPlaylist(name, target)
+            },
+            onDismiss = { activeAddToPlaylistTarget = null },
+        )
+    }
+
+    val totalPlaylistsCount = localPlaylists.size + state.playlists.size
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -139,7 +290,7 @@ fun FeedScreen(
                         )
                     },
                     label = {
-                        Text(if (state.playlists.isNotEmpty()) "Playlists (${state.playlists.size})" else "Playlists")
+                        Text(if (totalPlaylistsCount > 0) "Playlists ($totalPlaylistsCount)" else "Playlists")
                     },
                 )
                 NavigationBarItem(
@@ -246,10 +397,30 @@ fun FeedScreen(
 
                                     items(
                                         items = state.videos,
-                                        key = { it.url.ifBlank { it.videoId } },
+                                        key = { it.videoId.ifBlank { it.url } },
                                         contentType = { "video_item" },
                                     ) { video ->
-                                        VideoItem(video = video, onClick = { onVideoClick(video) })
+                                        val videoKey = video.videoId.ifBlank { video.url }
+                                        val target = remember(video) {
+                                            VideoActionTarget(
+                                                videoId = videoKey,
+                                                title = video.title,
+                                                channelName = video.channelName,
+                                                channelId = video.channelId.orEmpty(),
+                                                thumbnailUrl = video.thumbnailUrl,
+                                                durationSeconds = video.durationSeconds,
+                                            )
+                                        }
+                                        VideoItemCard(
+                                            title = video.title,
+                                            channelName = video.channelName,
+                                            thumbnailUrl = video.thumbnailUrl,
+                                            durationSeconds = video.durationSeconds,
+                                            uploadDateText = video.uploadDateText,
+                                            watchProgress = watchProgressMap[videoKey] ?: 0f,
+                                            onClick = { onVideoClick(video) },
+                                            onMoreOptions = { activeActionTarget = target },
+                                        )
                                         HorizontalDivider()
                                     }
                                 }
@@ -260,9 +431,16 @@ fun FeedScreen(
 
                 1 -> {
                     PlaylistsFeedView(
-                        playlists = state.playlists,
+                        youtubePlaylists = state.playlists,
+                        localPlaylists = localPlaylists,
                         onPlaylistClick = onPlaylistClick,
+                        onLocalPlaylistClick = onLocalPlaylistClick,
                         onAddPlaylist = onAddPlaylist,
+                        onCreateLocalPlaylist = {
+                            newLocalPlaylistName = ""
+                            showCreateLocalPlaylistDialog = true
+                        },
+                        onDeleteLocalPlaylist = viewModel::deleteLocalPlaylist,
                     )
                 }
 
@@ -272,6 +450,7 @@ fun FeedScreen(
                         onVideoClick = onRecentVideoClick,
                         onDeleteItem = viewModel::deleteHistoryItem,
                         onClearHistory = viewModel::clearWatchHistory,
+                        onMoreOptions = { target -> activeActionTarget = target },
                     )
                 }
             }
@@ -326,62 +505,309 @@ private fun ChannelErrorsSection(
     }
 }
 
+private enum class PlaylistFilter {
+    ALL, MY_PLAYLISTS, YOUTUBE
+}
+
 @Composable
 private fun PlaylistsFeedView(
-    playlists: List<PlaylistItemUiState>,
+    youtubePlaylists: List<PlaylistItemUiState>,
+    localPlaylists: List<LocalPlaylistWithCount>,
     onPlaylistClick: (PlaylistItemUiState) -> Unit,
+    onLocalPlaylistClick: (LocalPlaylistWithCount) -> Unit,
     onAddPlaylist: () -> Unit,
+    onCreateLocalPlaylist: () -> Unit,
+    onDeleteLocalPlaylist: (String) -> Unit,
 ) {
-    if (playlists.isEmpty()) {
-        Box(
+    var selectedFilter by rememberSaveable { mutableStateOf(PlaylistFilter.ALL) }
+    var playlistToDelete by remember { mutableStateOf<LocalPlaylistWithCount?>(null) }
+
+    if (playlistToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { playlistToDelete = null },
+            title = { Text("Delete Playlist?") },
+            text = { Text("Are you sure you want to delete '${playlistToDelete?.name}'? This cannot be undone.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        playlistToDelete?.let { onDeleteLocalPlaylist(it.id) }
+                        playlistToDelete = null
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { playlistToDelete = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    val showLocal = selectedFilter == PlaylistFilter.ALL || selectedFilter == PlaylistFilter.MY_PLAYLISTS
+    val showYouTube = selectedFilter == PlaylistFilter.ALL || selectedFilter == PlaylistFilter.YOUTUBE
+    val hasAny = (showLocal && localPlaylists.isNotEmpty()) || (showYouTube && youtubePlaylists.isNotEmpty())
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Filter bar
+        Row(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(32.dp),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+            FilterChip(
+                selected = selectedFilter == PlaylistFilter.ALL,
+                onClick = { selectedFilter = PlaylistFilter.ALL },
+                label = { Text("All (${localPlaylists.size + youtubePlaylists.size})") },
+            )
+            FilterChip(
+                selected = selectedFilter == PlaylistFilter.MY_PLAYLISTS,
+                onClick = { selectedFilter = PlaylistFilter.MY_PLAYLISTS },
+                label = { Text("My Playlists (${localPlaylists.size})") },
+            )
+            FilterChip(
+                selected = selectedFilter == PlaylistFilter.YOUTUBE,
+                onClick = { selectedFilter = PlaylistFilter.YOUTUBE },
+                label = { Text("YouTube (${youtubePlaylists.size})") },
+            )
+        }
+
+        // Action creation buttons
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Button(
+                onClick = onCreateLocalPlaylist,
+                modifier = Modifier.weight(1f),
             ) {
-                Icon(
-                    imageVector = Icons.Default.PlaylistPlay,
-                    contentDescription = null,
-                    modifier = Modifier.size(64.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = "No Playlists Added",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = "Curate full courses, tutorials, or music sets to watch without distraction.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Button(onClick = onAddPlaylist) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Add Playlist")
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("New Playlist")
+            }
+            OutlinedButton(
+                onClick = onAddPlaylist,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("YouTube Playlist")
+            }
+        }
+
+        if (!hasAny) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlaylistPlay,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = when (selectedFilter) {
+                            PlaylistFilter.MY_PLAYLISTS -> "No Custom Playlists"
+                            PlaylistFilter.YOUTUBE -> "No YouTube Playlists"
+                            PlaylistFilter.ALL -> "No Playlists Added"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "Create your own custom playlists or import playlists from YouTube to watch without distraction.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 16.dp, top = 12.dp, end = 16.dp, bottom = 80.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                if (showLocal && localPlaylists.isNotEmpty()) {
+                    if (selectedFilter == PlaylistFilter.ALL) {
+                        item(key = "local_playlists_header") {
+                            Text(
+                                text = "My Playlists (${localPlaylists.size})",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                    items(localPlaylists, key = { "local_${it.id}" }) { playlist ->
+                        LocalPlaylistCard(
+                            playlist = playlist,
+                            onClick = { onLocalPlaylistClick(playlist) },
+                            onDelete = { playlistToDelete = playlist },
+                        )
+                    }
+                }
+
+                if (showYouTube && youtubePlaylists.isNotEmpty()) {
+                    if (selectedFilter == PlaylistFilter.ALL) {
+                        item(key = "yt_playlists_header") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "YouTube Playlists (${youtubePlaylists.size})",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                    items(youtubePlaylists, key = { "yt_${it.playlistId}" }) { playlist ->
+                        PlaylistFeedCard(
+                            playlist = playlist,
+                            onClick = {
+                                if (playlist.isActive) {
+                                    onPlaylistClick(playlist)
+                                }
+                            },
+                        )
+                    }
                 }
             }
         }
-    } else {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 80.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            items(playlists, key = { it.playlistId }) { playlist ->
-                PlaylistFeedCard(
-                    playlist = playlist,
-                    onClick = {
-                        if (playlist.isActive) {
-                            onPlaylistClick(playlist)
-                        }
-                    },
-                )
+    }
+}
+
+@Composable
+private fun LocalPlaylistCard(
+    playlist: LocalPlaylistWithCount,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var showMenu by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        ),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                    .background(Color.Black),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (!playlist.thumbnailUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = playlist.thumbnailUrl,
+                        contentDescription = playlist.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.QueueMusic,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(56.dp),
+                    )
+                }
+
+                Surface(
+                    color = Color.Black.copy(alpha = 0.8f),
+                    shape = RoundedCornerShape(4.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QueueMusic,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${playlist.videoCount} videos",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = playlist.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Custom Playlist",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+
+                Box {
+                    IconButton(onClick = { showMenu = true }) {
+                        Icon(
+                            imageVector = Icons.Default.MoreVert,
+                            contentDescription = "Playlist options",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    DropdownMenu(
+                        expanded = showMenu,
+                        onDismissRequest = { showMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Delete playlist", color = MaterialTheme.colorScheme.error) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                )
+                            },
+                            onClick = {
+                                showMenu = false
+                                onDelete()
+                            },
+                        )
+                    }
+                }
             }
         }
     }
@@ -488,113 +914,5 @@ private fun PlaylistFeedCard(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun VideoItem(video: VideoFeedItem, onClick: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick),
-    ) {
-        // Video Thumbnail (16:9 aspect ratio)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (video.thumbnailUrl != null) {
-                AsyncImage(
-                    model = video.thumbnailUrl,
-                    contentDescription = video.title,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Default.PlayCircleOutline,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            // Duration badge overlay on thumbnail
-            if (video.durationSeconds > 0) {
-                Surface(
-                    shape = RoundedCornerShape(4.dp),
-                    color = Color.Black.copy(alpha = 0.85f),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(8.dp),
-                ) {
-                    Text(
-                        text = formatDuration(video.durationSeconds),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
-            }
-        }
-
-        // Video details below thumbnail
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-        ) {
-            Text(
-                text = video.title,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = video.channelName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (!video.uploadDateText.isNullOrBlank()) {
-                    Text(
-                        text = "•",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = video.uploadDateText,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
-                }
-            }
-        }
-    }
-}
-
-private fun formatDuration(durationSeconds: Long): String {
-    if (durationSeconds <= 0) return ""
-    val hours = durationSeconds / 3600
-    val minutes = (durationSeconds % 3600) / 60
-    val seconds = durationSeconds % 60
-    return if (hours > 0) {
-        String.format("%d:%02d:%02d", hours, minutes, seconds)
-    } else {
-        String.format("%d:%02d", minutes, seconds)
     }
 }

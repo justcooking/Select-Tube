@@ -1,7 +1,9 @@
 package com.selecttube.app.ui.playlist
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material3.AlertDialog
@@ -45,6 +48,10 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,15 +68,94 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.data.youtube.VideoFeedItem
+import com.selecttube.app.ui.common.AddToPlaylistSheet
+import com.selecttube.app.ui.common.VideoActionBottomSheet
+import com.selecttube.app.ui.common.VideoActionTarget
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistScreen(
     onNavigateBack: () -> Unit,
     onVideoClick: (VideoFeedItem) -> Unit,
+    onPlayBackground: (VideoActionTarget) -> Unit = {},
+    onPlayNext: (VideoActionTarget) -> Unit = {},
+    onEnqueue: (VideoActionTarget) -> Unit = {},
+    isCurrentlyPlaying: Boolean = false,
     viewModel: PlaylistViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val localPlaylists by viewModel.localPlaylists.collectAsStateWithLifecycle()
+
+    var activeActionTarget by remember { mutableStateOf<VideoActionTarget?>(null) }
+    var activeAddToPlaylistTarget by remember { mutableStateOf<VideoActionTarget?>(null) }
+
+    val assignedPlaylistIds by produceState<List<String>>(
+        initialValue = emptyList(),
+        key1 = activeAddToPlaylistTarget?.videoId,
+    ) {
+        val targetId = activeAddToPlaylistTarget?.videoId
+        if (targetId != null) {
+            viewModel.observeAssignedPlaylistsForVideo(targetId).collect { value = it }
+        } else {
+            value = emptyList()
+        }
+    }
+
+    activeActionTarget?.let { target ->
+        VideoActionBottomSheet(
+            video = target,
+            isCurrentlyPlaying = isCurrentlyPlaying,
+            onDismiss = { activeActionTarget = null },
+            onPlayInPlayer = {
+                activeActionTarget = null
+                onVideoClick(
+                    VideoFeedItem(
+                        videoId = target.videoId,
+                        title = target.title,
+                        channelName = target.channelName,
+                        channelId = target.channelId,
+                        thumbnailUrl = target.thumbnailUrl,
+                        uploadDateText = null,
+                        uploadTimestamp = 0L,
+                        durationSeconds = target.durationSeconds,
+                        url = target.videoId,
+                    )
+                )
+            },
+            onPlayInBackground = {
+                activeActionTarget = null
+                onPlayBackground(target)
+            },
+            onPlayNext = {
+                activeActionTarget = null
+                onPlayNext(target)
+            },
+            onEnqueue = {
+                activeActionTarget = null
+                onEnqueue(target)
+            },
+            onAddToPlaylist = {
+                val savedTarget = target
+                activeActionTarget = null
+                activeAddToPlaylistTarget = savedTarget
+            },
+        )
+    }
+
+    activeAddToPlaylistTarget?.let { target ->
+        AddToPlaylistSheet(
+            video = target,
+            playlists = localPlaylists,
+            assignedPlaylistIds = assignedPlaylistIds.toSet(),
+            onTogglePlaylist = { playlistId ->
+                viewModel.toggleVideoInLocalPlaylist(playlistId, target)
+            },
+            onCreatePlaylist = { name ->
+                viewModel.createLocalPlaylist(name, target)
+            },
+            onDismiss = { activeAddToPlaylistTarget = null },
+        )
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -252,6 +338,16 @@ fun PlaylistScreen(
                             }
 
                             itemsIndexed(state.videos, key = { _, v -> v.videoId }) { index, video ->
+                                val target = remember(video) {
+                                    VideoActionTarget(
+                                        videoId = video.videoId.ifBlank { video.url },
+                                        title = video.title,
+                                        channelName = video.channelName,
+                                        channelId = video.channelId.orEmpty(),
+                                        thumbnailUrl = video.thumbnailUrl,
+                                        durationSeconds = video.durationSeconds,
+                                    )
+                                }
                                 PlaylistTrackItem(
                                     index = index + 1,
                                     video = video,
@@ -262,6 +358,7 @@ fun PlaylistScreen(
                                             onVideoClick(video)
                                         }
                                     },
+                                    onMoreOptions = { activeActionTarget = target },
                                 )
                                 HorizontalDivider()
                             }
@@ -403,16 +500,21 @@ private fun PlaylistHeaderCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PlaylistTrackItem(
     index: Int,
     video: VideoFeedItem,
     onClick: () -> Unit,
+    onMoreOptions: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onMoreOptions,
+            )
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -472,6 +574,18 @@ private fun PlaylistTrackItem(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        IconButton(
+            onClick = onMoreOptions,
+            modifier = Modifier.size(36.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.MoreVert,
+                contentDescription = "More options",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
             )
         }
     }
