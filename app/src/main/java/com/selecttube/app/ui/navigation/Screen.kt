@@ -22,4 +22,11 @@ sealed class Screen(val route: String) {
             return "playlist/$encId?name=$encName"
         }
     }
+    data object LocalPlaylist : Screen("local_playlist/{playlistId}?name={name}") {
+        fun createRoute(playlistId: String, name: String = ""): String {
+            val encId = java.net.URLEncoder.encode(playlistId, "UTF-8")
+            val encName = java.net.URLEncoder.encode(name, "UTF-8")
+            return "local_playlist/$encId?name=$encName"
+        }
+    }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.selecttube.app.data.db.AppDatabase
 import com.selecttube.app.data.db.ChannelDao
+import com.selecttube.app.data.db.LocalPlaylistDao
 import com.selecttube.app.data.db.PlaylistDao
 import com.selecttube.app.data.db.WatchHistoryDao
 import dagger.Module
@@ -25,7 +26,11 @@ object AppModule {
             AppDatabase::class.java,
             "selecttube.db",
         )
-            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+            .addMigrations(
+                AppDatabase.MIGRATION_1_2,
+                AppDatabase.MIGRATION_2_3,
+                AppDatabase.MIGRATION_3_4,
+            )
             .build()
 
     @Provides
@@ -36,4 +41,7 @@ object AppModule {
 
     @Provides
     fun provideWatchHistoryDao(db: AppDatabase): WatchHistoryDao = db.watchHistoryDao()
+
+    @Provides
+    fun provideLocalPlaylistDao(db: AppDatabase): LocalPlaylistDao = db.localPlaylistDao()
 }
