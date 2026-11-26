@@ -1,7 +1,9 @@
 package com.selecttube.app.ui.playlist
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
@@ -30,8 +33,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -55,6 +57,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -71,6 +74,9 @@ import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.ui.common.AddToPlaylistSheet
 import com.selecttube.app.ui.common.VideoActionBottomSheet
 import com.selecttube.app.ui.common.VideoActionTarget
+import com.selecttube.app.ui.theme.Brand700
+import com.selecttube.app.ui.theme.Brand900
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -219,100 +225,53 @@ fun PlaylistScreen(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(bottom = 80.dp),
                     ) {
-                        // Playlist Header
+                        // Playlist Header (YouTube-style hero matching SelectTube navy theme)
                         item(key = "playlist_header") {
                             PlaylistHeaderCard(
                                 state = state,
-                                onPlayAll = {
+                                onPrimaryAction = {
                                     if (!state.isAllowed) {
                                         viewModel.openAddDialog()
-                                    } else if (!state.isActive && state.remainingCountdown != null) {
-                                        // Still cooling down
-                                    } else if (state.videos.isNotEmpty()) {
+                                    } else if (state.isActive && state.videos.isNotEmpty()) {
                                         onVideoClick(state.videos.first())
                                     }
                                 },
                             )
                         }
 
-                        // Preview Mode Banner (if playlist is not yet curated)
-                        if (!state.isAllowed && state.playlist != null) {
-                            item(key = "preview_card") {
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
-                                    ),
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(16.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Lock,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                                            modifier = Modifier.size(28.dp),
-                                        )
-                                        Spacer(modifier = Modifier.width(12.dp))
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "Preview Mode",
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                            )
-                                            Text(
-                                                text = "This playlist is not added to your library. You can browse the video list below, but videos cannot be played until added.",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f),
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Button(
-                                            onClick = { viewModel.openAddDialog() },
-                                        ) {
-                                            Text("Add")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Status Gating: If pending, show countdown message
+                        // Status Gating: If pending, show quiet raised cooling-down notice
                         if (!state.isActive && state.remainingCountdown != null) {
                             item(key = "pending_card") {
-                                Card(
+                                Surface(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(16.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
-                                    ),
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = Brand700,
+                                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(16.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         Icon(
-                                            Icons.Default.HourglassTop,
+                                            imageVector = Icons.Default.HourglassTop,
                                             contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.secondary,
-                                            modifier = Modifier.size(32.dp),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(20.dp),
                                         )
-                                        Spacer(modifier = Modifier.width(16.dp))
+                                        Spacer(modifier = Modifier.width(12.dp))
                                         Column {
                                             Text(
-                                                text = "Playlist Cooling Down",
-                                                style = MaterialTheme.typography.titleMedium,
-                                                fontWeight = FontWeight.Bold,
+                                                text = "Playlist cooling down",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Medium,
                                             )
+                                            Spacer(modifier = Modifier.height(4.dp))
                                             Text(
                                                 text = "Available in ${state.remainingCountdown}",
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             )
                                         }
                                     }
@@ -321,20 +280,30 @@ fun PlaylistScreen(
                         } else {
                             // Video items
                             item(key = "tracklist_header") {
+                                HorizontalDivider(
+                                    thickness = 0.5.dp,
+                                    color = Color.White.copy(alpha = 0.08f),
+                                )
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = "Videos (${state.videos.size})",
+                                        text = "Videos",
                                         style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                    Text(
+                                        text = "${state.videos.size}",
+                                        style = MaterialTheme.typography.bodySmall.copy(
+                                            fontFeatureSettings = "tnum",
+                                        ),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                                HorizontalDivider()
                             }
 
                             itemsIndexed(state.videos, key = { _, v -> v.videoId }) { index, video ->
@@ -351,6 +320,7 @@ fun PlaylistScreen(
                                 PlaylistTrackItem(
                                     index = index + 1,
                                     video = video,
+                                    isInteractive = state.isAllowed && state.isActive,
                                     onClick = {
                                         if (!state.isAllowed) {
                                             viewModel.openAddDialog()
@@ -358,9 +328,14 @@ fun PlaylistScreen(
                                             onVideoClick(video)
                                         }
                                     },
-                                    onMoreOptions = { activeActionTarget = target },
+                                    onMoreOptions = {
+                                        if (state.isAllowed && state.isActive) {
+                                            activeActionTarget = target
+                                        } else {
+                                            viewModel.openAddDialog()
+                                        }
+                                    },
                                 )
-                                HorizontalDivider()
                             }
                         }
                     }
@@ -432,21 +407,28 @@ fun PlaylistScreen(
 @Composable
 private fun PlaylistHeaderCard(
     state: PlaylistUiState,
-    onPlayAll: () -> Unit,
+    onPrimaryAction: () -> Unit,
 ) {
     val playlist = state.playlist
+    val videoCount = playlist?.videoCount ?: state.videos.size.toLong()
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(16.dp),
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(Brand700, Brand900),
+                ),
+            )
+            .padding(horizontal = 16.dp, vertical = 16.dp),
     ) {
-        // Thumbnail Banner
+        // Artwork Banner with YouTube-style video count pill
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
                 .clip(RoundedCornerShape(12.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
                 .background(Color.Black),
             contentAlignment = Alignment.Center,
         ) {
@@ -461,41 +443,146 @@ private fun PlaylistHeaderCard(
                 Icon(
                     imageVector = Icons.Default.PlaylistPlay,
                     contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(64.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(48.dp),
                 )
+            }
+
+            if (videoCount > 0) {
+                Surface(
+                    color = Color.Black.copy(alpha = 0.78f),
+                    shape = RoundedCornerShape(6.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlaylistPlay,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Text(
+                            text = "$videoCount videos",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFeatureSettings = "tnum",
+                            ),
+                            color = Color.White,
+                        )
+                    }
+                }
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
         Text(
-            text = playlist?.name ?: "",
+            text = playlist?.name.orEmpty(),
             style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
 
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "${playlist?.uploaderName ?: "Unknown"} • ${playlist?.videoCount ?: state.videos.size} videos",
+            text = listOfNotNull(
+                playlist?.uploaderName?.takeIf { it.isNotBlank() },
+                if (videoCount > 0) "$videoCount videos" else null,
+            ).joinToString(" • "),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // Play All Button (enabled only when active)
-        Button(
-            onClick = onPlayAll,
-            enabled = state.isActive && state.videos.isNotEmpty(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
-        ) {
-            Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(20.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Play All")
+        when {
+            !state.isAllowed && state.playlist != null -> {
+                Button(
+                    onClick = onPrimaryAction,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = Color.White,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Add to Library",
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Brand700,
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Preview only. Add this playlist to play videos.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            state.isActive -> {
+                Button(
+                    onClick = onPrimaryAction,
+                    enabled = state.videos.isNotEmpty(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = Color.White,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Play All",
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
         }
     }
 }
@@ -505,6 +592,7 @@ private fun PlaylistHeaderCard(
 private fun PlaylistTrackItem(
     index: Int,
     video: VideoFeedItem,
+    isInteractive: Boolean,
     onClick: () -> Unit,
     onMoreOptions: () -> Unit,
 ) {
@@ -515,22 +603,24 @@ private fun PlaylistTrackItem(
                 onClick = onClick,
                 onLongClick = onMoreOptions,
             )
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // Number badge
+        // Tabular index
         Text(
             text = "$index",
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontFeatureSettings = "tnum",
+            ),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(28.dp),
+            modifier = Modifier.width(24.dp),
         )
 
-        // Video Thumbnail with duration overlay
+        // Video Thumbnail with duration overlay (120x68 on 4dp grid)
         Box(
             modifier = Modifier
-                .size(width = 110.dp, height = 62.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .size(width = 120.dp, height = 68.dp)
+                .clip(RoundedCornerShape(8.dp))
                 .background(Color.Black),
         ) {
             AsyncImage(
@@ -542,16 +632,18 @@ private fun PlaylistTrackItem(
             if (video.durationSeconds > 0) {
                 Surface(
                     color = Color.Black.copy(alpha = 0.8f),
-                    shape = RoundedCornerShape(3.dp),
+                    shape = RoundedCornerShape(4.dp),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(3.dp),
+                        .padding(4.dp),
                 ) {
                     Text(
                         text = formatDuration(video.durationSeconds),
                         color = Color.White,
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFeatureSettings = "tnum",
+                        ),
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                     )
                 }
             }
@@ -567,7 +659,7 @@ private fun PlaylistTrackItem(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = video.channelName,
                 style = MaterialTheme.typography.bodySmall,
@@ -577,16 +669,18 @@ private fun PlaylistTrackItem(
             )
         }
 
-        IconButton(
-            onClick = onMoreOptions,
-            modifier = Modifier.size(36.dp),
-        ) {
-            Icon(
-                imageVector = Icons.Default.MoreVert,
-                contentDescription = "More options",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp),
-            )
+        if (isInteractive) {
+            IconButton(
+                onClick = onMoreOptions,
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.MoreVert,
+                    contentDescription = "More options",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
         }
     }
 }
@@ -596,8 +690,8 @@ private fun formatDuration(seconds: Long): String {
     val mins = (seconds % 3600) / 60
     val secs = seconds % 60
     return if (hrs > 0) {
-        String.format("%d:%02d:%02d", hrs, mins, secs)
+        String.format(Locale.US, "%d:%02d:%02d", hrs, mins, secs)
     } else {
-        String.format("%d:%02d", mins, secs)
+        String.format(Locale.US, "%d:%02d", mins, secs)
     }
 }

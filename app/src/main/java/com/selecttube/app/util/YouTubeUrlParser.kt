@@ -25,7 +25,7 @@ object YouTubeUrlParser {
         }
 
         val host = uri.host?.lowercase().orEmpty()
-        val path = uri.path.orEmpty()
+        val path = uri.path.orEmpty().trimEnd('/')
 
         if (!host.contains("youtube.com") && !host.contains("youtu.be")) {
             return null
@@ -40,20 +40,22 @@ object YouTubeUrlParser {
             }
         }
 
-        // 2. Standard youtube.com links
+        // 2. Standard youtube.com / m.youtube.com / music.youtube.com links
         if (host.contains("youtube.com")) {
             when {
-                // Video: /watch?v=...
+                // Video: /watch?v=... (or /watch?list=... without v)
                 path == "/watch" -> {
                     val videoId = uri.getQueryParameter("v")
+                    val playlistId = uri.getQueryParameter("list")
                     if (!videoId.isNullOrBlank()) {
-                        val playlistId = uri.getQueryParameter("list")
                         return YouTubeLink.Video(videoId = videoId, playlistId = playlistId)
+                    } else if (!playlistId.isNullOrBlank()) {
+                        return YouTubeLink.Playlist(playlistId = playlistId)
                     }
                 }
 
-                // Playlist: /playlist?list=...
-                path == "/playlist" -> {
+                // Playlist: /playlist?list=... or root /?list=...
+                path == "/playlist" || (path.isEmpty() && !uri.getQueryParameter("list").isNullOrBlank()) -> {
                     val playlistId = uri.getQueryParameter("list")
                     if (!playlistId.isNullOrBlank()) {
                         return YouTubeLink.Playlist(playlistId = playlistId)

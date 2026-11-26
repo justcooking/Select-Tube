@@ -13,13 +13,12 @@ import com.selecttube.app.deeplink.DeepLinkManager
 import com.selecttube.app.util.PasswordSecurity
 import com.selecttube.app.util.YouTubeLink
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -73,8 +72,8 @@ class AppNavViewModel @Inject constructor(
     val appMode: StateFlow<AppMode> = channelRepository.appMode
         .stateIn(viewModelScope, SharingStarted.Eagerly, AppMode.ADULT)
 
-    private val _navCommands = MutableSharedFlow<NavCommand>(extraBufferCapacity = 1)
-    val navCommands: SharedFlow<NavCommand> = _navCommands.asSharedFlow()
+    private val _navCommands = Channel<NavCommand>(Channel.BUFFERED)
+    val navCommands = _navCommands.receiveAsFlow()
 
     private val _dialogState = MutableStateFlow<IncomingLinkDialogState>(IncomingLinkDialogState.None)
     val dialogState: StateFlow<IncomingLinkDialogState> = _dialogState.asStateFlow()
@@ -86,6 +85,7 @@ class AppNavViewModel @Inject constructor(
     private fun observeDeepLinks() {
         viewModelScope.launch {
             deepLinkManager.events.collect { link ->
+                deepLinkManager.clearEvent()
                 handleIncomingLink(link)
             }
         }
@@ -95,7 +95,7 @@ class AppNavViewModel @Inject constructor(
         viewModelScope.launch {
             when (link) {
                 is YouTubeLink.Video -> processVideoLink(link.videoId)
-                is YouTubeLink.Playlist -> _navCommands.tryEmit(NavCommand.OpenPlaylist(link.playlistId))
+                is YouTubeLink.Playlist -> _navCommands.send(NavCommand.OpenPlaylist(link.playlistId))
                 is YouTubeLink.Channel -> processChannelLink(link.channelQueryOrUrl)
             }
         }
@@ -109,7 +109,7 @@ class AppNavViewModel @Inject constructor(
 
             if (channel != null && channel.isActive) {
                 _dialogState.value = IncomingLinkDialogState.None
-                _navCommands.tryEmit(
+                _navCommands.send(
                     NavCommand.PlayVideo(
                         videoId = playbackInfo.videoId,
                         title = playbackInfo.title,
@@ -150,7 +150,7 @@ class AppNavViewModel @Inject constructor(
             val existing = channelRepository.getChannel(channel.channelId)
             if (existing != null && existing.isActive) {
                 _dialogState.value = IncomingLinkDialogState.None
-                _navCommands.tryEmit(NavCommand.OpenChannel(channel.channelId, channel.name))
+                _navCommands.send(NavCommand.OpenChannel(channel.channelId, channel.name))
             } else {
                 _dialogState.value = IncomingLinkDialogState.ChannelNotAllowed(
                     videoId = null,
@@ -221,7 +221,7 @@ class AppNavViewModel @Inject constructor(
                     // Active immediately
                     _dialogState.value = IncomingLinkDialogState.None
                     if (current.videoId != null) {
-                        _navCommands.tryEmit(
+                        _navCommands.send(
                             NavCommand.PlayVideo(
                                 videoId = current.videoId,
                                 title = current.videoTitle ?: "",
@@ -230,7 +230,7 @@ class AppNavViewModel @Inject constructor(
                             )
                         )
                     } else {
-                        _navCommands.tryEmit(NavCommand.OpenChannel(current.channelId, current.channelName))
+                        _navCommands.send(NavCommand.OpenChannel(current.channelId, current.channelName))
                     }
                 } else {
                     // Cooling down

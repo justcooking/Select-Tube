@@ -76,25 +76,27 @@ fun AppNavigation(
     val currentRoute = navBackStackEntry?.destination?.route ?: startRoute
     val isBottomBarVisible = currentRoute == Screen.Feed.route
 
-    LaunchedEffect(Unit) {
-        navViewModel.navCommands.collect { cmd ->
-            when (cmd) {
-                is NavCommand.PlayVideo -> {
-                    playerViewModel.playVideo(
-                        urlOrId = cmd.videoId,
-                        title = cmd.title,
-                        channelName = cmd.channelName,
-                        thumbnailUrl = cmd.thumbnailUrl,
-                    )
-                    playerViewModel.expandPlayer()
-                }
-                is NavCommand.OpenPlaylist -> {
-                    playerViewModel.collapsePlayer()
-                    navController.navigate(Screen.Playlist.createRoute(cmd.playlistId, ""))
-                }
-                is NavCommand.OpenChannel -> {
-                    playerViewModel.collapsePlayer()
-                    navController.navigate(Screen.Channel.createRoute(cmd.channelId, cmd.channelName))
+    LaunchedEffect(isOnboardingDone) {
+        if (isOnboardingDone == true) {
+            navViewModel.navCommands.collect { cmd ->
+                when (cmd) {
+                    is NavCommand.PlayVideo -> {
+                        playerViewModel.playVideo(
+                            urlOrId = cmd.videoId,
+                            title = cmd.title,
+                            channelName = cmd.channelName,
+                            thumbnailUrl = cmd.thumbnailUrl,
+                        )
+                        playerViewModel.expandPlayer()
+                    }
+                    is NavCommand.OpenPlaylist -> {
+                        playerViewModel.collapsePlayer()
+                        navController.navigate(Screen.Playlist.createRoute(cmd.playlistId, ""))
+                    }
+                    is NavCommand.OpenChannel -> {
+                        playerViewModel.collapsePlayer()
+                        navController.navigate(Screen.Channel.createRoute(cmd.channelId, cmd.channelName))
+                    }
                 }
             }
         }

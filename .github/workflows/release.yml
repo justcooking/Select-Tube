@@ -36,30 +36,19 @@ jobs:
       - name: Prepare APK Asset
         run: |
           mkdir -p release-assets
-          cp app/build/outputs/apk/debug/app-debug.apk release-assets/SelectTube-v1.0.0.apk
+          cp app/build/outputs/apk/debug/app-debug.apk "release-assets/SelectTube-${{ github.ref_name }}.apk"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "SelectTube v1.0.0"
+          name: "SelectTube ${{ github.ref_name }}"
           tag_name: ${{ github.ref_name }}
           draft: false
           prerelease: false
+          generate_release_notes: true
           body: |
-            ### 🚀 SelectTube v1.0.0 Initial Release
+            ### SelectTube ${{ github.ref_name }}
 
-            A strictly curated, subscription-only YouTube client for Android. Zero algorithmic rabbit holes, zero recommendations, and complete distraction-free focus.
-
-            #### 📱 Direct Download
-            Click the download link below to install on your Android device (Android 8.0+):
-            - **[Download SelectTube-v1.0.0.apk](https://github.com/justcooking/Select-Tube/releases/download/v1.0.0/SelectTube-v1.0.0.apk)**
-
-            #### ✨ Key Features
-            - **Curated Whitelist:** Feeds and searches are strictly restricted to approved channels.
-            - **Custom Independent Playlists:** Create and manage offline local playlists without any YouTube account.
-            - **Queue & Navigation:** Up Next queue, forward/backward video skip buttons, instant queue shuffle.
-            - **Sleep Timer:** 15m, 30m, 45m, 60m, or stop at end of current video.
-            - **Save Queue as Playlist:** Export your active playback queue into a new or existing playlist.
-            - **Background & Mini-Player:** Seamless picture-in-picture and background audio with lock-screen media controls.
-            - **Parental Controls & Focus Mode:** BCrypt master password, cooling-off delay on channel additions, bedtime schedules, and daily screen time limits.
-          files: release-assets/SelectTube-v1.0.0.apk
+            #### Direct Download
+            - **[Download SelectTube-${{ github.ref_name }}.apk](https://github.com/justcooking/Select-Tube/releases/download/${{ github.ref_name }}/SelectTube-${{ github.ref_name }}.apk)**
+          files: "release-assets/SelectTube-${{ github.ref_name }}.apk"
