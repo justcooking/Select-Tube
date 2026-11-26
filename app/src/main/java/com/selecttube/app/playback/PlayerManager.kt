@@ -95,6 +95,8 @@ data class PlaybackState(
     val isBackgroundOnly: Boolean = false,
     val videoWidth: Int = 0,
     val videoHeight: Int = 0,
+    val playbackSpeed: Float = 1.0f,
+    val skipSilenceEnabled: Boolean = false,
 )
 
 /**
@@ -623,11 +625,13 @@ class PlayerManager @Inject constructor(
             originalUrl = urlOrId,
         )
 
-        _playbackState.update {
+        _playbackState.update { prev ->
             PlaybackState(
                 isResolving = true,
                 error = null,
                 playbackInfo = placeholderInfo,
+                playbackSpeed = prev.playbackSpeed,
+                skipSilenceEnabled = prev.skipSilenceEnabled,
             )
         }
 
@@ -732,9 +736,22 @@ class PlayerManager @Inject constructor(
         }
         player.stop()
         player.clearMediaItems()
+        player.setPlaybackSpeed(1.0f)
+        player.skipSilenceEnabled = false
         currentPlaybackInfo = null
         lastUrlOrId = null
         _playbackState.update { PlaybackState() }
+    }
+
+    fun setPlaybackSpeed(speed: Float) {
+        val clamped = speed.coerceIn(0.25f, 3.0f)
+        player.setPlaybackSpeed(clamped)
+        _playbackState.update { it.copy(playbackSpeed = clamped) }
+    }
+
+    fun setSkipSilenceEnabled(enabled: Boolean) {
+        player.skipSilenceEnabled = enabled
+        _playbackState.update { it.copy(skipSilenceEnabled = enabled) }
     }
 
     fun setBackgroundOnly(enabled: Boolean) {

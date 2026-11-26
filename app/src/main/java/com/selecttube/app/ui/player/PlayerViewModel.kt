@@ -235,6 +235,14 @@ class PlayerViewModel @Inject constructor(
         playerManager.setSubtitle(subtitleName)
     }
 
+    fun setPlaybackSpeed(speed: Float) {
+        playerManager.setPlaybackSpeed(speed)
+    }
+
+    fun setSkipSilenceEnabled(enabled: Boolean) {
+        playerManager.setSkipSilenceEnabled(enabled)
+    }
+
     fun setBackgroundOnly(enabled: Boolean) {
         playerManager.setBackgroundOnly(enabled)
     }

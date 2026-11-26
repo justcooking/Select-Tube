@@ -22,6 +22,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,6 +61,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Check
@@ -71,6 +73,7 @@ import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -80,9 +83,11 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.QueueMusic
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.material.icons.filled.TimerOff
 import androidx.compose.material.icons.filled.Warning
@@ -103,6 +108,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -162,6 +168,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.selecttube.app.data.db.LocalPlaylistWithCount
+import com.selecttube.app.data.youtube.ChapterInfo
 import com.selecttube.app.data.youtube.DescriptionType
 import com.selecttube.app.data.youtube.ResolvedPlaybackInfo
 import com.selecttube.app.playback.PlaybackState
@@ -202,6 +209,8 @@ fun PlayerScreen(
     var showQueueSheet by rememberSaveable { mutableStateOf(false) }
     var showSleepTimerDialog by rememberSaveable { mutableStateOf(false) }
     var showSavePlaylistDialog by rememberSaveable { mutableStateOf(false) }
+    var showSpeedSheet by rememberSaveable { mutableStateOf(false) }
+    var showChaptersSheet by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     val coroutineScope = rememberCoroutineScope()
@@ -985,6 +994,33 @@ fun PlayerScreen(
                                     color = if (queue.isNotEmpty()) Brand500 else Color.White,
                                 )
                             }
+
+                            val speedActive = state.playbackSpeed != 1.0f || state.skipSilenceEnabled
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        showSpeedSheet = true
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Speed,
+                                    contentDescription = "Playback speed and skip silence",
+                                    tint = if (speedActive) Color(0xFF2979FF) else Color.White,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = buildString {
+                                        append(formatSpeedLabel(state.playbackSpeed))
+                                        if (state.skipSilenceEnabled) append(" • Skip")
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (speedActive) Color(0xFF2979FF) else Color.White,
+                                )
+                            }
                         }
 
                         // Description View (expandable/collapsible, only when non-empty)
@@ -1529,6 +1565,39 @@ fun PlayerScreen(
                                                     }
                                                 }
                                             }
+
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                        }
+
+                                        // Speed & Skip Silence button
+                                        val isSpeedOrSkipActive = state.playbackSpeed != 1.0f || state.skipSilenceEnabled
+                                        Surface(
+                                            onClick = {
+                                                showSpeedSheet = true
+                                                controlsVisible = true
+                                                lastUserInteractionTime = System.currentTimeMillis()
+                                            },
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = if (isSpeedOrSkipActive) Color(0xFF2979FF).copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.55f),
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (state.skipSilenceEnabled) Icons.Default.GraphicEq else Icons.Default.Speed,
+                                                    contentDescription = "Playback speed & skip silence",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(14.dp),
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                    text = formatSpeedLabel(state.playbackSpeed),
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold,
+                                                )
+                                            }
                                         }
                                     }
 
@@ -1784,112 +1853,199 @@ fun PlayerScreen(
                                     }
                                 }
 
-                                // Bottom row: Timestamps + Sleek progress scrubber
-                                Row(
+                                // Bottom row: Timestamps + Chapter selector (like YouTube) + Sleek progress scrubber
+                                val overlayChapters = state.playbackInfo?.chapters.orEmpty()
+                                val activePosMs = scrubPositionMs ?: state.currentPositionMs
+                                val currentChapter = remember(overlayChapters, activePosMs) {
+                                    overlayChapters.lastOrNull { (it.startSeconds * 1000L) <= activePosMs }
+                                        ?: overlayChapters.firstOrNull()
+                                }
+                                val current = activePosMs.toFloat()
+                                val duration = maxOf(state.durationMs.toFloat(), 1f)
+
+                                Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .align(Alignment.BottomCenter)
                                         .background(
                                             Brush.verticalGradient(
-                                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.8f)),
+                                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)),
                                             ),
                                         )
                                         .padding(
                                             horizontal = if (inFullscreenMode) (if (isLandscape) 28.dp else 16.dp) else 14.dp,
                                             vertical = if (inFullscreenMode) (if (isLandscape) 12.dp else 24.dp) else 6.dp,
                                         ),
-                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(
-                                        text = formatTime(scrubPositionMs ?: state.currentPositionMs),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Medium,
-                                        color = Color.White,
-                                    )
+                                    if (overlayChapters.isNotEmpty() && currentChapter != null) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(bottom = 2.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Text(
+                                                text = "${formatTime(activePosMs)} / ${formatTime(state.durationMs)}",
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontFeatureSettings = "tnum",
+                                                ),
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color.White,
+                                            )
 
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "  •  ",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color.White.copy(alpha = 0.6f),
+                                            )
 
-                                    val current = (scrubPositionMs ?: state.currentPositionMs).toFloat()
-                                    val duration = maxOf(state.durationMs.toFloat(), 1f)
-
-                                    Slider(
-                                        value = current.coerceIn(0f, duration),
-                                        onValueChange = {
-                                            scrubPositionMs = it.toLong()
-                                            lastUserInteractionTime = System.currentTimeMillis()
-                                        },
-                                        onValueChangeFinished = {
-                                            scrubPositionMs?.let {
-                                                viewModel.seekTo(it)
-                                                scrubPositionMs = null
-                                                lastUserInteractionTime = System.currentTimeMillis()
-                                            }
-                                        },
-                                        valueRange = 0f..duration,
-                                        thumb = {
-                                            Spacer(modifier = Modifier.size(10.dp))
-                                        },
-                                        track = { sliderState ->
-                                            Canvas(
+                                            Row(
                                                 modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .height(10.dp),
+                                                    .weight(1f, fill = false)
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .clickable {
+                                                        showChaptersSheet = true
+                                                        lastUserInteractionTime = System.currentTimeMillis()
+                                                    }
+                                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
                                             ) {
-                                                val trackHeight = size.height
-                                                val trackCornerRadius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
-                                                val range = sliderState.valueRange.endInclusive - sliderState.valueRange.start
-                                                val fraction = if (range > 0f) {
-                                                    ((sliderState.value - sliderState.valueRange.start) / range).coerceIn(0f, 1f)
-                                                } else 0f
-
-                                                // Inactive background track
-                                                drawRoundRect(
-                                                    color = Color.White.copy(alpha = 0.35f),
-                                                    size = size,
-                                                    cornerRadius = trackCornerRadius,
+                                                Text(
+                                                    text = currentChapter.title,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = Color.White.copy(alpha = 0.92f),
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false),
                                                 )
+                                                Spacer(modifier = Modifier.width(2.dp))
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                                    contentDescription = "Open chapters",
+                                                    tint = Color.White.copy(alpha = 0.85f),
+                                                    modifier = Modifier.size(16.dp),
+                                                )
+                                            }
+                                        }
+                                    }
 
-                                                // Geometry for centered dot and concentric blue head
-                                                val dotRadius = 3.dp.toPx()
-                                                val minX = trackHeight / 2f
-                                                val maxX = (size.width - (trackHeight / 2f)).coerceAtLeast(minX)
-                                                val dotX = minX + (maxX - minX) * fraction
-                                                val centerY = size.height / 2f
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        if (overlayChapters.isEmpty()) {
+                                            Text(
+                                                text = formatTime(activePosMs),
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontFeatureSettings = "tnum",
+                                                ),
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color.White,
+                                            )
 
-                                                // Active played track
-                                                val activeWidth = (dotX + trackHeight / 2f).coerceIn(0f, size.width)
-                                                if (activeWidth > 0f) {
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                        }
+
+                                        Slider(
+                                            value = current.coerceIn(0f, duration),
+                                            onValueChange = {
+                                                scrubPositionMs = it.toLong()
+                                                lastUserInteractionTime = System.currentTimeMillis()
+                                            },
+                                            onValueChangeFinished = {
+                                                scrubPositionMs?.let {
+                                                    viewModel.seekTo(it)
+                                                    scrubPositionMs = null
+                                                    lastUserInteractionTime = System.currentTimeMillis()
+                                                }
+                                            },
+                                            valueRange = 0f..duration,
+                                            thumb = {
+                                                Spacer(modifier = Modifier.size(10.dp))
+                                            },
+                                            track = { sliderState ->
+                                                Canvas(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(10.dp),
+                                                ) {
+                                                    val trackHeight = size.height
+                                                    val trackCornerRadius = CornerRadius(trackHeight / 2f, trackHeight / 2f)
+                                                    val range = sliderState.valueRange.endInclusive - sliderState.valueRange.start
+                                                    val fraction = if (range > 0f) {
+                                                        ((sliderState.value - sliderState.valueRange.start) / range).coerceIn(0f, 1f)
+                                                    } else 0f
+
+                                                    // Inactive background track
                                                     drawRoundRect(
-                                                        color = Color(0xFF2979FF),
-                                                        size = Size(activeWidth, trackHeight),
+                                                        color = Color.White.copy(alpha = 0.35f),
+                                                        size = size,
                                                         cornerRadius = trackCornerRadius,
                                                     )
+
+                                                    // Geometry for centered dot and concentric blue head
+                                                    val dotRadius = 3.dp.toPx()
+                                                    val minX = trackHeight / 2f
+                                                    val maxX = (size.width - (trackHeight / 2f)).coerceAtLeast(minX)
+                                                    val dotX = minX + (maxX - minX) * fraction
+                                                    val centerY = size.height / 2f
+
+                                                    // Active played track
+                                                    val activeWidth = (dotX + trackHeight / 2f).coerceIn(0f, size.width)
+                                                    if (activeWidth > 0f) {
+                                                        drawRoundRect(
+                                                            color = Color(0xFF2979FF),
+                                                            size = Size(activeWidth, trackHeight),
+                                                            cornerRadius = trackCornerRadius,
+                                                        )
+                                                    }
+
+                                                    // YouTube-style chapter markers along the progress track
+                                                    if (overlayChapters.isNotEmpty() && duration > 1f) {
+                                                        val tickWidth = 2.dp.toPx()
+                                                        overlayChapters.forEach { chap ->
+                                                            if (chap.startSeconds > 0L) {
+                                                                val chapFrac = ((chap.startSeconds * 1000f) / duration).coerceIn(0f, 1f)
+                                                                val chapX = minX + (maxX - minX) * chapFrac
+                                                                drawRect(
+                                                                    color = Color.Black.copy(alpha = 0.75f),
+                                                                    topLeft = Offset(chapX - tickWidth / 2f, 0f),
+                                                                    size = Size(tickWidth, trackHeight),
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // White circular dot centered vertically and inside the blue bar
+                                                    drawCircle(
+                                                        color = Color.White,
+                                                        radius = dotRadius,
+                                                        center = Offset(dotX, centerY),
+                                                    )
                                                 }
+                                            },
+                                            colors = SliderDefaults.colors(
+                                                thumbColor = Color.Transparent,
+                                                activeTrackColor = Color(0xFF2979FF),
+                                                inactiveTrackColor = Color.White.copy(alpha = 0.35f),
+                                            ),
+                                            modifier = Modifier.weight(1f),
+                                        )
 
-                                                // White circular dot centered vertically and inside the blue bar
-                                                drawCircle(
-                                                    color = Color.White,
-                                                    radius = dotRadius,
-                                                    center = Offset(dotX, centerY),
-                                                )
-                                            }
-                                        },
-                                        colors = SliderDefaults.colors(
-                                            thumbColor = Color.Transparent,
-                                            activeTrackColor = Color(0xFF2979FF),
-                                            inactiveTrackColor = Color.White.copy(alpha = 0.35f),
-                                        ),
-                                        modifier = Modifier.weight(1f),
-                                    )
+                                        if (overlayChapters.isEmpty()) {
+                                            Spacer(modifier = Modifier.width(8.dp))
 
-                                    Spacer(modifier = Modifier.width(8.dp))
-
-                                    Text(
-                                        text = formatTime(state.durationMs),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.Medium,
-                                        color = Color.White,
-                                    )
+                                            Text(
+                                                text = formatTime(state.durationMs),
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontFeatureSettings = "tnum",
+                                                ),
+                                                fontWeight = FontWeight.Medium,
+                                                color = Color.White,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2132,6 +2288,443 @@ fun PlayerScreen(
                 showSavePlaylistDialog = false
             },
         )
+    }
+
+    // ── Playback Speed & Skip Silence Sheet ───────────────────────────────────
+    if (showSpeedSheet) {
+        PlaybackSettingsBottomSheet(
+            playbackSpeed = state.playbackSpeed,
+            skipSilenceEnabled = state.skipSilenceEnabled,
+            onSpeedChange = { speed ->
+                viewModel.setPlaybackSpeed(speed)
+                lastUserInteractionTime = System.currentTimeMillis()
+            },
+            onSkipSilenceChange = { enabled ->
+                viewModel.setSkipSilenceEnabled(enabled)
+                lastUserInteractionTime = System.currentTimeMillis()
+            },
+            onDismiss = {
+                showSpeedSheet = false
+            },
+        )
+    }
+
+    // ── Video Chapters Section Sheet (YouTube-style section cards) ────────────
+    if (showChaptersSheet) {
+        val chaptersList = state.playbackInfo?.chapters.orEmpty()
+        ChaptersBottomSheet(
+            chapters = chaptersList,
+            currentPositionMs = state.currentPositionMs,
+            durationMs = state.durationMs,
+            thumbnailUrl = state.playbackInfo?.thumbnailUrl,
+            onSelectChapter = { chapter ->
+                viewModel.seekTo(chapter.startSeconds * 1000L)
+                lastUserInteractionTime = System.currentTimeMillis()
+                showChaptersSheet = false
+            },
+            onDismiss = {
+                showChaptersSheet = false
+            },
+        )
+    }
+}
+
+private fun formatSpeedLabel(speed: Float): String {
+    val rounded = kotlin.math.round(speed * 100f) / 100f
+    return if (rounded % 1.0f == 0f) {
+        "${rounded.toInt()}x"
+    } else if ((rounded * 10f) % 1.0f == 0f) {
+        String.format(Locale.US, "%.1fx", rounded)
+    } else {
+        String.format(Locale.US, "%.2fx", rounded)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlaybackSettingsBottomSheet(
+    playbackSpeed: Float,
+    skipSilenceEnabled: Boolean,
+    onSpeedChange: (Float) -> Unit,
+    onSkipSilenceChange: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val speedPresets = listOf(0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        dragHandle = null,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Speed,
+                    contentDescription = null,
+                    tint = Color(0xFF2979FF),
+                    modifier = Modifier.size(22.dp),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Playback settings",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Skip silence toggle
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { onSkipSilenceChange(!skipSilenceEnabled) },
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.GraphicEq,
+                        contentDescription = null,
+                        tint = if (skipSilenceEnabled) Color(0xFF2979FF) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Skip silence",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Automatically skip silent gaps in audio",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(
+                        checked = skipSilenceEnabled,
+                        onCheckedChange = onSkipSilenceChange,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Playback speed header + fine tune
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Playback speed",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                if (kotlin.math.abs(playbackSpeed - 1.0f) > 0.01f) {
+                    TextButton(onClick = { onSpeedChange(1.0f) }) {
+                        Text("Reset", color = Color(0xFF2979FF))
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Fine-tune +/- step row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                IconButton(
+                    onClick = { onSpeedChange((playbackSpeed - 0.05f).coerceAtLeast(0.25f)) },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Remove,
+                        contentDescription = "Decrease speed",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+
+                Text(
+                    text = formatSpeedLabel(playbackSpeed),
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontFeatureSettings = "tnum",
+                    ),
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF2979FF),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.width(96.dp),
+                )
+
+                IconButton(
+                    onClick = { onSpeedChange((playbackSpeed + 0.05f).coerceAtMost(3.0f)) },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Increase speed",
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Preset speed chips
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                speedPresets.forEach { preset ->
+                    val isSelected = kotlin.math.abs(playbackSpeed - preset) < 0.01f
+                    Surface(
+                        onClick = { onSpeedChange(preset) },
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) Color(0xFF2979FF) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                        border = if (isSelected) null else BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(
+                            text = formatSpeedLabel(preset),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontFeatureSettings = "tnum",
+                            ),
+                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            modifier = Modifier.padding(vertical = 10.dp),
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChaptersBottomSheet(
+    chapters: List<ChapterInfo>,
+    currentPositionMs: Long,
+    durationMs: Long,
+    thumbnailUrl: String?,
+    onSelectChapter: (ChapterInfo) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+    val activeChapterIndex = remember(chapters, currentPositionMs) {
+        val idx = chapters.indexOfLast { (it.startSeconds * 1000L) <= currentPositionMs }
+        if (idx >= 0) idx else 0
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        dragHandle = null,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(top = 16.dp, bottom = 12.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Chapters",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "${chapters.size}",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontFeatureSettings = "tnum",
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(modifier = Modifier.weight(1f))
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(32.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+
+            HorizontalDivider(
+                thickness = 0.5.dp,
+                color = Color.White.copy(alpha = 0.08f),
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                itemsIndexed(chapters) { index, chapter ->
+                    val isCurrent = index == activeChapterIndex
+                    val nextStartSec = chapters.getOrNull(index + 1)?.startSeconds
+                    val endMs = if (nextStartSec != null) nextStartSec * 1000L else durationMs
+                    val chapterDurationSec = ((endMs - chapter.startSeconds * 1000L) / 1000L).coerceAtLeast(0L)
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isCurrent) {
+                            Color(0xFF2979FF).copy(alpha = 0.14f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        },
+                        border = BorderStroke(
+                            width = 1.dp,
+                            color = if (isCurrent) {
+                                Color(0xFF2979FF).copy(alpha = 0.7f)
+                            } else {
+                                Color.White.copy(alpha = 0.08f)
+                            },
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onSelectChapter(chapter) },
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // Chapter section preview card thumbnail + timestamp pill
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 108.dp, height = 60.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.Black),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (!thumbnailUrl.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = thumbnailUrl,
+                                        contentDescription = chapter.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                                Surface(
+                                    color = Color.Black.copy(alpha = 0.82f),
+                                    shape = RoundedCornerShape(4.dp),
+                                    modifier = Modifier
+                                        .align(Alignment.BottomEnd)
+                                        .padding(4.dp),
+                                ) {
+                                    Text(
+                                        text = formatTime(chapter.startSeconds * 1000L),
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontFeatureSettings = "tnum",
+                                        ),
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = chapter.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Medium,
+                                    color = if (isCurrent) Color.White else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (isCurrent) {
+                                        Text(
+                                            text = "Playing",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = Color(0xFF2979FF),
+                                        )
+                                        if (chapterDurationSec > 0L) {
+                                            Text(
+                                                text = "  •  ",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                    if (chapterDurationSec > 0L) {
+                                        Text(
+                                            text = formatTime(chapterDurationSec * 1000L),
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFeatureSettings = "tnum",
+                                            ),
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
