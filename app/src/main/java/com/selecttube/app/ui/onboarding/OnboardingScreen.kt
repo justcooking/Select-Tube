@@ -60,6 +60,8 @@ import com.selecttube.app.data.preferences.AppMode
 import com.selecttube.app.ui.theme.Brand500
 import com.selecttube.app.ui.theme.Brand700
 import com.selecttube.app.ui.theme.Brand900
+import com.selecttube.app.ui.theme.Surface0
+import com.selecttube.app.ui.theme.Surface1
 
 @Composable
 fun OnboardingScreen(
@@ -77,7 +79,7 @@ fun OnboardingScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brand900),
+            .background(Surface0),
         contentAlignment = Alignment.Center,
     ) {
         Column(
@@ -93,7 +95,7 @@ fun OnboardingScreen(
                 modifier = Modifier
                     .size(68.dp)
                     .clip(CircleShape)
-                    .background(Brand700),
+                    .background(Surface1),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -107,9 +109,9 @@ fun OnboardingScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "Welcome to Select Tube",
+                text = "Select Tube",
                 style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 color = Color.White,
                 textAlign = TextAlign.Center,
             )
@@ -117,9 +119,9 @@ fun OnboardingScreen(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Zero-leakage, subscription-only YouTube.\nWho will be using this app?",
+                text = "Watch what matters. Zero leakage, subscription-only.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFAAAAAA),
+                color = Color(0xFFA1A1A6),
                 textAlign = TextAlign.Center,
             )
 

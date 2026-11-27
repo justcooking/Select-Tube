@@ -37,17 +37,15 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -57,6 +55,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -82,9 +81,14 @@ import com.selecttube.app.data.db.LocalPlaylistWithCount
 import com.selecttube.app.data.db.WatchHistoryEntity
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.ui.common.AddToPlaylistSheet
+import com.selecttube.app.ui.common.ShimmerVideoCard
 import com.selecttube.app.ui.common.VideoActionBottomSheet
 import com.selecttube.app.ui.common.VideoActionTarget
 import com.selecttube.app.ui.common.VideoItemCard
+import com.selecttube.app.ui.theme.Accent
+import com.selecttube.app.ui.theme.Hairline
+import com.selecttube.app.ui.theme.TextMuted
+import com.selecttube.app.ui.theme.TextSecondary
 import com.selecttube.app.ui.update.UpdateDialog
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -142,48 +146,62 @@ fun FeedScreen(
         onRetry = viewModel::retryUpdate,
     )
 
+    // Create Playlist — ModalBottomSheet instead of AlertDialog
     if (showCreateLocalPlaylistDialog) {
-        AlertDialog(
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
             onDismissRequest = {
                 showCreateLocalPlaylistDialog = false
                 newLocalPlaylistName = ""
             },
-            title = { Text("New Playlist") },
-            text = {
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    text = "New Playlist",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
                 OutlinedTextField(
                     value = newLocalPlaylistName,
                     onValueChange = { newLocalPlaylistName = it },
-                    label = { Text("Playlist name") },
+                    label = { Text("Name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val name = newLocalPlaylistName.trim()
-                        if (name.isNotBlank()) {
-                            viewModel.createLocalPlaylist(name)
-                            newLocalPlaylistName = ""
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    TextButton(
+                        onClick = {
                             showCreateLocalPlaylistDialog = false
-                        }
-                    },
-                    enabled = newLocalPlaylistName.isNotBlank(),
-                ) {
-                    Text("Create")
+                            newLocalPlaylistName = ""
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Cancel") }
+                    Button(
+                        onClick = {
+                            val name = newLocalPlaylistName.trim()
+                            if (name.isNotBlank()) {
+                                viewModel.createLocalPlaylist(name)
+                                newLocalPlaylistName = ""
+                                showCreateLocalPlaylistDialog = false
+                            }
+                        },
+                        enabled = newLocalPlaylistName.isNotBlank(),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Create") }
                 }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showCreateLocalPlaylistDialog = false
-                        newLocalPlaylistName = ""
-                    }
-                ) {
-                    Text("Cancel")
-                }
-            },
-        )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+        }
     }
 
     activeActionTarget?.let { target ->
@@ -266,12 +284,20 @@ fun FeedScreen(
         },
         bottomBar = {
             NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 6.dp,
+                containerColor = MaterialTheme.colorScheme.background,
+                tonalElevation = 0.dp,
             ) {
+                val colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor   = Accent,
+                    selectedTextColor   = Accent,
+                    indicatorColor      = Accent.copy(alpha = 0.12f),
+                    unselectedIconColor = TextMuted,
+                    unselectedTextColor = TextMuted,
+                )
                 NavigationBarItem(
                     selected = selectedFeedTab == 0,
                     onClick = { selectedFeedTab = 0 },
+                    colors = colors,
                     icon = {
                         Icon(
                             imageVector = Icons.Default.Subscriptions,
@@ -283,6 +309,7 @@ fun FeedScreen(
                 NavigationBarItem(
                     selected = selectedFeedTab == 1,
                     onClick = { selectedFeedTab = 1 },
+                    colors = colors,
                     icon = {
                         Icon(
                             imageVector = Icons.Default.PlaylistPlay,
@@ -296,6 +323,7 @@ fun FeedScreen(
                 NavigationBarItem(
                     selected = selectedFeedTab == 2,
                     onClick = { selectedFeedTab = 2 },
+                    colors = colors,
                     icon = {
                         Icon(
                             imageVector = Icons.Default.History,
@@ -323,11 +351,15 @@ fun FeedScreen(
                     ) {
                         when {
                             state.isLoading && state.videos.isEmpty() -> {
-                                Box(
+                                // Shimmer skeleton placeholders
+                                LazyColumn(
                                     modifier = Modifier.fillMaxSize(),
-                                    contentAlignment = Alignment.Center,
+                                    contentPadding = PaddingValues(bottom = 80.dp),
                                 ) {
-                                    CircularProgressIndicator()
+                                    items(6) {
+                                        ShimmerVideoCard()
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                                    }
                                 }
                             }
 
@@ -421,7 +453,7 @@ fun FeedScreen(
                                             onClick = { onVideoClick(video) },
                                             onMoreOptions = { activeActionTarget = target },
                                         )
-                                        HorizontalDivider()
+                                        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
                                     }
                                 }
                             }
@@ -489,7 +521,6 @@ private fun ChannelErrorsSection(
                             text = "Could not load $channelName",
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onErrorContainer,
-                            fontWeight = FontWeight.Bold,
                         )
                         Text(
                             text = error,
@@ -550,30 +581,50 @@ private fun PlaylistsFeedView(
     val hasAny = (showLocal && localPlaylists.isNotEmpty()) || (showYouTube && youtubePlaylists.isNotEmpty())
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Filter bar
+        // Filter bar — clean text tabs with underline active indicator
+        val filters = listOf(
+            PlaylistFilter.ALL        to "All (${localPlaylists.size + youtubePlaylists.size})",
+            PlaylistFilter.MY_PLAYLISTS to "My Playlists (${localPlaylists.size})",
+            PlaylistFilter.YOUTUBE    to "YouTube (${youtubePlaylists.size})",
+        )
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+                .padding(horizontal = 8.dp, vertical = 0.dp),
+            horizontalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            FilterChip(
-                selected = selectedFilter == PlaylistFilter.ALL,
-                onClick = { selectedFilter = PlaylistFilter.ALL },
-                label = { Text("All (${localPlaylists.size + youtubePlaylists.size})") },
-            )
-            FilterChip(
-                selected = selectedFilter == PlaylistFilter.MY_PLAYLISTS,
-                onClick = { selectedFilter = PlaylistFilter.MY_PLAYLISTS },
-                label = { Text("My Playlists (${localPlaylists.size})") },
-            )
-            FilterChip(
-                selected = selectedFilter == PlaylistFilter.YOUTUBE,
-                onClick = { selectedFilter = PlaylistFilter.YOUTUBE },
-                label = { Text("YouTube (${youtubePlaylists.size})") },
-            )
+            filters.forEach { (filter, label) ->
+                val selected = selectedFilter == filter
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { selectedFilter = filter }
+                        .padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (selected) Accent else TextMuted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .height(2.dp)
+                                .fillMaxWidth(0.6f)
+                                .background(
+                                    color = if (selected) Accent else androidx.compose.ui.graphics.Color.Transparent,
+                                    shape = RoundedCornerShape(1.dp),
+                                ),
+                        )
+                    }
+                }
+            }
         }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
 
         // Action creation buttons
         Row(
@@ -624,7 +675,6 @@ private fun PlaylistsFeedView(
                             PlaylistFilter.ALL -> "No Playlists Added"
                         },
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
                     )
                     Text(
                         text = "Create your own custom playlists or import playlists from YouTube to watch without distraction.",
@@ -767,7 +817,6 @@ private fun LocalPlaylistCard(
                     Text(
                         text = playlist.name,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )

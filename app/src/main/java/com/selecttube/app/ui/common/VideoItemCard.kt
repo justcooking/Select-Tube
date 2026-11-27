@@ -29,10 +29,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.selecttube.app.ui.theme.Accent
+import com.selecttube.app.ui.theme.TextMuted
+import com.selecttube.app.ui.theme.TextSecondary
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -50,13 +52,13 @@ fun VideoItemCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
+            .background(MaterialTheme.colorScheme.background)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onMoreOptions,
             ),
     ) {
-        // Thumbnail Box (16:9)
+        // ── Thumbnail (16:9, full-bleed) ───────────────────────────────────
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -76,15 +78,15 @@ fun VideoItemCard(
                     imageVector = Icons.Default.PlayCircleOutline,
                     contentDescription = null,
                     modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = TextMuted,
                 )
             }
 
-            // Duration badge
+            // Duration badge — crisp, tabular, bottom-right
             if (durationSeconds > 0) {
                 Surface(
                     shape = RoundedCornerShape(4.dp),
-                    color = Color.Black.copy(alpha = 0.85f),
+                    color = Color.Black.copy(alpha = 0.80f),
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(8.dp),
@@ -93,27 +95,26 @@ fun VideoItemCard(
                         text = formatDuration(durationSeconds),
                         style = MaterialTheme.typography.labelSmall,
                         color = Color.White,
-                        fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                     )
                 }
             }
 
-            // Watch progress bar if partially watched
+            // Watch-progress bar — Accent red at bottom edge
             if (watchProgress > 0.02f) {
                 LinearProgressIndicator(
-                    progress = watchProgress.coerceIn(0f, 1f),
+                    progress = { watchProgress.coerceIn(0f, 1f) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(3.dp)
                         .align(Alignment.BottomCenter),
-                    color = Color.Red,
-                    trackColor = Color.White.copy(alpha = 0.3f),
+                    color = Accent,
+                    trackColor = Color.White.copy(alpha = 0.20f),
                 )
             }
         }
 
-        // Details Row
+        // ── Metadata row ──────────────────────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -124,40 +125,27 @@ fun VideoItemCard(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = channelName,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (!uploadDateText.isNullOrBlank()) {
-                        Text(
-                            text = "•",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
-                            text = uploadDateText,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                        )
-                    }
+                // Channel • date in a single line
+                val subtitle = buildString {
+                    append(channelName)
+                    if (!uploadDateText.isNullOrBlank()) append(" • $uploadDateText")
                 }
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
 
+            // 36dp touch target, 18dp icon
             IconButton(
                 onClick = onMoreOptions,
                 modifier = Modifier.size(36.dp),
@@ -165,17 +153,17 @@ fun VideoItemCard(
                 Icon(
                     imageVector = Icons.Default.MoreVert,
                     contentDescription = "More options",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
+                    tint = TextMuted,
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }
     }
 }
 
-private fun formatDuration(durationSeconds: Long): String {
+internal fun formatDuration(durationSeconds: Long): String {
     if (durationSeconds <= 0) return ""
-    val hours = durationSeconds / 3600
+    val hours   = durationSeconds / 3600
     val minutes = (durationSeconds % 3600) / 60
     val seconds = durationSeconds % 60
     return if (hours > 0) {

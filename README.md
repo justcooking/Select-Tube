@@ -1,9 +1,9 @@
 # Select Tube
 
-[![Download APK](https://img.shields.io/badge/Download-APK%20(v1.0.3)-2979FF?style=for-the-badge&logo=android&logoColor=white)](https://github.com/justcooking/Select-Tube/releases/download/v1.0.3/SelectTube-v1.0.3.apk)
+[![Download APK](https://img.shields.io/badge/Download-APK%20(v1.0.4)-2979FF?style=for-the-badge&logo=android&logoColor=white)](https://github.com/justcooking/Select-Tube/releases/download/v1.0.4/SelectTube-v1.0.4.apk)
 [![Release](https://img.shields.io/github/v/release/justcooking/Select-Tube?style=for-the-badge&color=success)](https://github.com/justcooking/Select-Tube/releases/latest)
 
-> 📲 **[Click here to download SelectTube v1.0.3 APK](https://github.com/justcooking/Select-Tube/releases/download/v1.0.3/SelectTube-v1.0.3.apk)** directly to your Android phone!
+> 📲 **[Click here to download SelectTube v1.0.4 APK](https://github.com/justcooking/Select-Tube/releases/download/v1.0.4/SelectTube-v1.0.4.apk)** directly to your Android phone!
 
 A strictly curated, subscription-only YouTube client for Android. Select Tube shows videos **only** from channels and playlists you explicitly approve — everywhere in the app. There are no algorithmic recommendations, no trending pages, no comment rabbit holes, and zero ads.
 

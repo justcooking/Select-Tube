@@ -371,7 +371,7 @@ fun SettingsScreen(
                         FilterChip(
                             selected = selectedTab == 3,
                             onClick = { selectedTab = 3 },
-                            label = { Text("⏳ Pending ($totalPending)") },
+                            label = { Text("Pending ($totalPending)") },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
                                 selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,

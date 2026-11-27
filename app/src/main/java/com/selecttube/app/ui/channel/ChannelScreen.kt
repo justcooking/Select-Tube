@@ -90,18 +90,22 @@ import coil.compose.AsyncImage
 import com.selecttube.app.data.youtube.ResolvedPlaylist
 import com.selecttube.app.data.youtube.VideoFeedItem
 import com.selecttube.app.ui.common.AddToPlaylistSheet
+import com.selecttube.app.ui.common.ShimmerVideoCard
 import com.selecttube.app.ui.common.VideoActionBottomSheet
 import com.selecttube.app.ui.common.VideoActionTarget
-import com.selecttube.app.ui.theme.Brand500
-import com.selecttube.app.ui.theme.Brand700
-import com.selecttube.app.ui.theme.Brand900
+import com.selecttube.app.ui.theme.Accent
+import com.selecttube.app.ui.theme.Hairline
+import com.selecttube.app.ui.theme.Surface0
+import com.selecttube.app.ui.theme.Surface1
+import com.selecttube.app.ui.theme.TextMuted
+import com.selecttube.app.ui.theme.TextSecondary
 import java.util.Locale
 
-// App brand palette
-private val YouTubeDarkBg = Brand900 // Color(0xFF1A1A2E) - Our main background color
-private val YouTubeCardBg = Brand700 // Color(0xFF16213E) - Our surface color
-private val YouTubeSecondaryText = Color(0xFFAAAAAA)
-private val YouTubeBorderColor = Color(0xFF26334D)
+// App brand palette — now using theme tokens
+private val YouTubeDarkBg        = Surface0
+private val YouTubeCardBg        = Surface1
+private val YouTubeSecondaryText = TextSecondary
+private val YouTubeBorderColor   = Hairline
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -214,7 +218,7 @@ fun ChannelScreen(
                         text = state.channel?.name ?: viewModel.channelNameParam.ifBlank { "Channel" },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.SemiBold,
                         color = Color.White,
                     )
                 },
@@ -246,7 +250,10 @@ fun ChannelScreen(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CircularProgressIndicator(color = Brand500)
+                        // Shimmer skeleton while loading channel
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(5) { ShimmerVideoCard() }
+                        }
                     }
                 }
 
@@ -282,12 +289,12 @@ fun ChannelScreen(
                         Button(
                             onClick = { viewModel.loadChannelProfile(isRefresh = false) },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = Brand500,
+                                containerColor = Accent,
                                 contentColor = Color.White,
                             ),
                             shape = RoundedCornerShape(20.dp),
                         ) {
-                            Text("Retry", fontWeight = FontWeight.Bold)
+                            Text("Retry")
                         }
                     }
                 }
@@ -316,7 +323,7 @@ fun ChannelScreen(
                                         .height(84.dp)
                                         .background(
                                             Brush.verticalGradient(
-                                                listOf(Brand700.copy(alpha = 0.5f), Color(0xFF1E1E1E), YouTubeDarkBg)
+                                                listOf(Surface1.copy(alpha = 0.5f), Color(0xFF1E1E1E), YouTubeDarkBg)
                                             )
                                         ),
                                 )
@@ -350,13 +357,13 @@ fun ChannelScreen(
                                             modifier = Modifier
                                                 .size(72.dp)
                                                 .clip(CircleShape)
-                                                .background(Brand500),
+                                                .background(Accent),
                                             contentAlignment = Alignment.Center,
                                         ) {
                                             Text(
                                                 text = channel.name.take(1).uppercase(),
                                                 style = MaterialTheme.typography.headlineMedium,
-                                                fontWeight = FontWeight.Bold,
+                                                fontWeight = FontWeight.Medium,
                                                 color = Color.White,
                                             )
                                         }
@@ -368,7 +375,7 @@ fun ChannelScreen(
                                         Text(
                                             text = channel.name,
                                             style = MaterialTheme.typography.titleLarge,
-                                            fontWeight = FontWeight.Bold,
+                                            fontWeight = FontWeight.SemiBold,
                                             color = Color.White,
                                             maxLines = 2,
                                             overflow = TextOverflow.Ellipsis,
@@ -406,7 +413,7 @@ fun ChannelScreen(
                                             Surface(
                                                 shape = RoundedCornerShape(20.dp),
                                                 color = Color(0xFF272727),
-                                                border = BorderStroke(1.dp, Brand500.copy(alpha = 0.4f)),
+                                                border = BorderStroke(1.dp, Accent.copy(alpha = 0.4f)),
                                                 modifier = Modifier.height(38.dp),
                                             ) {
                                                 Row(
@@ -417,7 +424,7 @@ fun ChannelScreen(
                                                         imageVector = Icons.Default.Check,
                                                         contentDescription = null,
                                                         modifier = Modifier.size(16.dp),
-                                                        tint = Brand500,
+                                                        tint = Accent,
                                                     )
                                                     Spacer(modifier = Modifier.width(6.dp))
                                                     Text(
@@ -514,7 +521,7 @@ fun ChannelScreen(
                                         Button(
                                             onClick = { viewModel.onAllowChannelClick() },
                                             colors = ButtonDefaults.buttonColors(
-                                                containerColor = Brand500,
+                                                containerColor = Accent,
                                                 contentColor = Color.White,
                                             ),
                                             shape = RoundedCornerShape(20.dp),
@@ -567,7 +574,7 @@ fun ChannelScreen(
                                             Text(
                                                 text = if (isExpanded) "Show less" else "...more",
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = Brand500,
+                                                color = Accent,
                                                 fontWeight = FontWeight.Bold,
                                             )
                                         }
@@ -603,13 +610,13 @@ fun ChannelScreen(
                                                 modifier = Modifier
                                                     .size(56.dp)
                                                     .clip(CircleShape)
-                                                    .background(Brand500.copy(alpha = 0.15f)),
+                                                    .background(Accent.copy(alpha = 0.15f)),
                                                 contentAlignment = Alignment.Center,
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Default.Lock,
                                                     contentDescription = null,
-                                                    tint = Brand500,
+                                                    tint = Accent,
                                                     modifier = Modifier.size(28.dp),
                                                 )
                                             }
@@ -638,7 +645,7 @@ fun ChannelScreen(
                                             Button(
                                                 onClick = { viewModel.onAllowChannelClick() },
                                                 colors = ButtonDefaults.buttonColors(
-                                                    containerColor = Brand500,
+                                                    containerColor = Accent,
                                                     contentColor = Color.White,
                                                 ),
                                                 shape = RoundedCornerShape(20.dp),
@@ -787,7 +794,7 @@ fun ChannelScreen(
                                                 .padding(48.dp),
                                             contentAlignment = Alignment.Center,
                                         ) {
-                                            CircularProgressIndicator(color = Brand500)
+                                            CircularProgressIndicator(color = Accent)
                                         }
                                     }
                                 } else if ((state.selectedCategory == ChannelCategory.PLAYLISTS && state.playlists.isEmpty()) ||
@@ -898,7 +905,7 @@ fun ChannelScreen(
                                                 CircularProgressIndicator(
                                                     modifier = Modifier.size(28.dp),
                                                     strokeWidth = 2.5.dp,
-                                                    color = Brand500,
+                                                    color = Accent,
                                                 )
                                             }
                                         }
@@ -990,7 +997,7 @@ fun ChannelScreen(
                     enabled = !state.isSubmittingAction,
                     shape = RoundedCornerShape(20.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Brand500,
+                        containerColor = Accent,
                         contentColor = Color.White,
                     ),
                 ) {
@@ -1083,7 +1090,7 @@ private fun ShortGridItem(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(Brand500),
+                        .background(Accent),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -1367,7 +1374,7 @@ private fun ChannelPlaylistItem(
             Text(
                 text = "View playlist",
                 style = MaterialTheme.typography.labelSmall,
-                color = Brand500,
+                color = Accent,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(top = 2.dp),
             )

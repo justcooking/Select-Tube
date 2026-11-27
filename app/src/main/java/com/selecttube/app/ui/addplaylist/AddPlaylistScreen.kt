@@ -113,9 +113,9 @@ fun AddPlaylistScreen(
             ) {
                 Text(
                     text = if (state.appMode == AppMode.ADULT) {
-                        "👤 Adult Mode: No passwords. 2-hour delay applies after your first playlist."
+                        "Adult Mode: No passwords required. 2-hour delay applies after your first playlist."
                     } else {
-                        "🛡️ Child Mode: Parent Master Password is required to approve playlists."
+                        "Child Mode: Parent Master Password is required to approve playlists."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),

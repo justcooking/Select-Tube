@@ -2,18 +2,28 @@ package com.selecttube.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Brand palette
-val Brand900 = Color(0xFF1A1A2E)   // deep navy — launcher background
-val Brand700 = Color(0xFF16213E)
-val Brand500 = Color(0xFF0F3460)
-val Accent   = Color(0xFFE94560)   // red-pink accent (play button feel)
+// ── Cinema-dark surface ramp ───────────────────────────────────────────────
+val Surface0  = Color(0xFF0F0F10)   // page background
+val Surface1  = Color(0xFF18181B)   // card / list surface
+val Surface2  = Color(0xFF242428)   // raised / input / active row
+val Hairline  = Color(0x14FFFFFF)   // white @ 8%
 
-// Light scheme seeds
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
+// ── Text ──────────────────────────────────────────────────────────────────
+val TextPrimary   = Color(0xFFEDEDED)
+val TextSecondary = Color(0xFFA1A1A6)
+val TextMuted     = Color(0xFF85858B)
 
-// Dark scheme seeds
-val Purple40 = Color(0xFF6650A4)
-val PurpleGrey40 = Color(0xFF625B71)
-val Pink40 = Color(0xFF7D5260)
+// ── Accent (single, cobalt) ───────────────────────────────────────────────
+val Accent = Color(0xFF2979FF)
+
+// ── Semantic ─────────────────────────────────────────────────────────────
+val DestructiveRed = Color(0xFFFF5252)
+val WarmAmber      = Color(0xFFFFB74D)
+val SuccessGreen   = Color(0xFF00C853)
+
+// ── Legacy aliases kept for external import sites still using them ─────────
+// (ChannelScreen, OnboardingScreen — will be replaced below, but keep
+//  Brand500/700/900 so the compiler doesn't explode during the transition)
+val Brand900 = Surface0
+val Brand700 = Surface1
+val Brand500 = Accent
